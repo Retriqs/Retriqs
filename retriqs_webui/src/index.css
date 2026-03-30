@@ -1,0 +1,223 @@
+@import 'tailwindcss';
+
+@plugin 'tailwindcss-animate';
+@plugin 'tailwind-scrollbar';
+
+@source '../index.html';
+@source './**/*.{ts,tsx}';
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  --background: #faf7f8;
+  --foreground: #1a0a12;
+  --card: #ffffff;
+  --card-foreground: #1a0a12;
+  --popover: #ffffff;
+  --popover-foreground: #1a0a12;
+  --primary: #b03a5a;
+  --primary-foreground: #ffffff;
+  --secondary: #f0e4e9;
+  --secondary-foreground: #1a0a12;
+  --muted: #f0e4e9;
+  --muted-foreground: #6b5d64;
+  --accent: #d4605a;
+  --accent-foreground: #ffffff;
+  --destructive: #dc2626;
+  --destructive-foreground: #ffffff;
+  --border: #e8dce1;
+  --input: #e8dce1;
+  --ring: #b03a5a;
+  --radius: 0.75rem;
+
+  /* Glassmorphism Variables */
+  --glass-bg: rgba(255, 255, 255, 0.7);
+  --glass-border: rgba(120, 40, 80, 0.08);
+  --glass-card-bg: radial-gradient(circle at top left, rgba(255, 255, 255, 0.85) 0%, rgba(250, 240, 245, 0.5) 100%);
+}
+
+.dark {
+  --background: #0d0610;
+  --foreground: #f5eef1;
+  --card: #160c18;
+  --card-foreground: #f5eef1;
+  --popover: #160c18;
+  --popover-foreground: #f5eef1;
+  --primary: #d4605a;
+  --primary-foreground: #ffffff;
+  --secondary: #2a1a2e;
+  --secondary-foreground: #f5eef1;
+  --muted: #2a1a2e;
+  --muted-foreground: #a394a1;
+  --accent: #e87461;
+  --accent-foreground: #ffffff;
+  --destructive: #ef4444;
+  --destructive-foreground: #ffffff;
+  --border: #2a1a2e;
+  --input: #2a1a2e;
+  --ring: #d4605a;
+
+  /* Glassmorphism Variables */
+  --glass-bg: rgba(13, 6, 16, 0.7);
+  --glass-border: rgba(212, 96, 90, 0.12);
+  --glass-card-bg: radial-gradient(circle at top left, rgba(42, 26, 46, 0.5) 0%, rgba(13, 6, 16, 0.7) 100%);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  --animate-accordion-down: accordion-down 0.2s ease-out;
+  --animate-accordion-up: accordion-up 0.2s ease-out;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-family: 'Inter', sans-serif;
+    transition: background-color 0.3s ease, color 0.3s ease;
+  }
+}
+
+/* Glassmorphism Utilities */
+@layer utilities {
+  .glass {
+    background: var(--glass-bg);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid var(--glass-border);
+  }
+
+  .glass-card {
+    background: var(--glass-card-bg);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid var(--glass-border);
+  }
+
+  .premium-bg {
+    @apply relative;
+  }
+
+  .premium-bg::before {
+    content: '';
+    @apply pointer-events-none absolute inset-0 -z-10 bg-[radial-gradient(circle_at_50%_0%,rgba(176,58,90,0.05)_0%,transparent_50%)] dark:bg-[radial-gradient(circle_at_50%_0%,rgba(212,96,90,0.1)_0%,transparent_50%)];
+  }
+}
+
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: hsl(0 0% 80%);
+  border-radius: 5px;
+}
+
+::-webkit-scrollbar-track {
+  background-color: hsl(0 0% 95%);
+}
+
+.dark {
+  ::-webkit-scrollbar-thumb {
+    background-color: hsl(0 0% 90%);
+  }
+
+  ::-webkit-scrollbar-track {
+    background-color: hsl(0 0% 0%);
+  }
+}
+
+/* KaTeX Math Formula Styles */
+.katex-display-wrapper {
+  text-align: center;
+  position: relative;
+}
+
+.katex-display-wrapper .katex-display {
+  margin: 0.5em 0;
+  text-align: center;
+}
+
+.katex-inline-wrapper .katex {
+  font-size: inherit;
+  line-height: inherit;
+}
+
+/* Ensure KaTeX formulas inherit color properly */
+.katex .base {
+  color: inherit;
+}
+
+/* Improve KaTeX display for different themes */
+.katex .mord,
+.katex .mop,
+.katex .mbin,
+.katex .mrel,
+.katex .mpunct,
+.katex .mopen,
+.katex .mclose,
+.katex .minner {
+  color: inherit;
+}
+
+/* Fix KaTeX display overflow issues */
+.katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+  max-width: 100%;
+}
+
+.katex-display > .katex {
+  white-space: nowrap;
+}
+
+/* Improve KaTeX error display */
+.katex .katex-error {
+  background-color: rgba(255, 0, 0, 0.1);
+  border: 1px solid rgba(255, 0, 0, 0.3);
+  border-radius: 4px;
+  padding: 2px 4px;
+  color: #dc2626;
+}
+
+.dark .katex .katex-error {
+  background-color: rgba(255, 0, 0, 0.2);
+  border-color: rgba(255, 0, 0, 0.4);
+  color: #ef4444;
+}
