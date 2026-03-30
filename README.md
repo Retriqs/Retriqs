@@ -40,25 +40,53 @@ No setup hell. Just results.
 
 ## ⚡ Features
 
-- 🖥️ Desktop-first — no scripts or CLI required  
-- 🔒 Local-first — your data never leaves your machine  
-- 🧠 GraphRAG built-in (LightRAG)  
-- 🤖 Ollama integration  
-- 🔁 Switch models for extraction & querying  
+- 🖥️ Desktop-first — no scripts or CLI required
+- 🔒 Local-first — your data never leaves your machine
+- 🧠 GraphRAG built-in (LightRAG)
+- 🤖 Ollama integration
+- 🔁 Switch models for extraction & querying
 - 📄 Multi-document support
 
 ## ⚙️ Getting Started
 
 ### 1. Install Ollama
+
 https://ollama.com
 
 ### 2. Download Retriqs
+
 https://retriqs.com/Retriqs-setup.exe
 
 ### 3. Run
-- Import documents  
-- Build graph  
+
+- Import documents
+- Build graph
 - Start querying
+
+## Quick Guide for Local Setup
+
+Use the following flow for a local setup.
+
+In the repository root:
+
+```bash
+uv sync --extra offline
+```
+
+In `retriqs_webui`:
+
+```bash
+bun i
+bun run build
+```
+
+Back in the repository root:
+
+```bash
+retriqs-server
+```
+
+If the dependencies install cleanly and the WebUI build succeeds, the app should start and work locally.
 
 ## 📝 Changelog
 
@@ -68,8 +96,8 @@ Stay up to date with the latest updates and improvements:
 
 ## 🌐 Links
 
-- 🌍 Website → https://retriqs.com  
-- 💬 Discord → https://discord.gg/tU8NwppUa3  
+- 🌍 Website → https://retriqs.com
+- 💬 Discord → https://discord.gg/tU8NwppUa3
 - 🧠 Feedback → https://d3vs.featurebase.app
 
 ## 📄 License
