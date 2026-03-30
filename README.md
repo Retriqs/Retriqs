@@ -6,10 +6,9 @@
   <a href="https://retriqs.com/Retriqs-setup.exe">
     <img src="https://img.shields.io/badge/Download-Windows%20Installer-00C853?style=for-the-badge&logo=windows&logoColor=white" />
   </a>
-</p>
-
-<p align="center">
-  ⚡ Windows installer available — macOS coming soon
+  <a href="https://retriqs.com/Retriqs-setup.dmg">
+    <img src="https://img.shields.io/badge/Download-macOS%20Installer-000000?style=for-the-badge&logo=apple&logoColor=white" />
+  </a>
 </p>
 
 <p align="center">
