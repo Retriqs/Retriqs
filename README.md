@@ -54,7 +54,8 @@ https://ollama.com
 
 ### 2. Download Retriqs
 
-https://retriqs.com/Retriqs-setup.exe
+- https://retriqs.com/Retriqs-setup.exe
+- https://retriqs.com/Retriqs-setup.dmg
 
 ### 3. Run
 
