@@ -17,6 +17,7 @@ import { uploadDocument } from '@/api/retriqs'
 import { UploadIcon } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { useTenant } from '@/contexts/TenantContext'
+import { trackEvent } from '@/lib/analytics'
 
 interface UploadDocumentsDialogProps {
   onDocumentsUploaded?: () => Promise<void>
@@ -62,6 +63,8 @@ export default function UploadDocumentsDialog({ onDocumentsUploaded }: UploadDoc
     async (filesToUpload: File[]) => {
       setIsUploading(true)
       let hasSuccessfulUpload = false
+      let successfulUploadCount = 0
+      let failedUploadCount = 0
 
       // Only clear errors for files that are being uploaded, keep errors for rejected files
       setFileErrors(prev => {
@@ -94,6 +97,7 @@ export default function UploadDocumentsDialog({ onDocumentsUploaded }: UploadDoc
             // Validate tenant is selected
             if (!selectedTenantId) {
               uploadErrors[file.name] = 'Please select a tenant before uploading files'
+              failedUploadCount += 1
               setFileErrors(prev => ({
                 ...prev,
                 [file.name]: uploadErrors[file.name]
@@ -120,12 +124,14 @@ export default function UploadDocumentsDialog({ onDocumentsUploaded }: UploadDoc
             }, selectedTenantId)
 
             if (result.status === 'duplicated') {
+              failedUploadCount += 1
               uploadErrors[file.name] = t('documentPanel.uploadDocuments.fileUploader.duplicateFile')
               setFileErrors(prev => ({
                 ...prev,
                 [file.name]: t('documentPanel.uploadDocuments.fileUploader.duplicateFile')
               }))
             } else if (result.status !== 'success') {
+              failedUploadCount += 1
               uploadErrors[file.name] = result.message
               setFileErrors(prev => ({
                 ...prev,
@@ -134,6 +140,7 @@ export default function UploadDocumentsDialog({ onDocumentsUploaded }: UploadDoc
             } else {
               // Mark that we had at least one successful upload
               hasSuccessfulUpload = true
+              successfulUploadCount += 1
             }
           } catch (err) {
             console.error(`Upload failed for ${file.name}:`, err)
@@ -158,6 +165,7 @@ export default function UploadDocumentsDialog({ onDocumentsUploaded }: UploadDoc
 
             // Record error message in both local tracking and state
             uploadErrors[file.name] = errorMsg
+            failedUploadCount += 1
             setFileErrors(prev => ({
               ...prev,
               [file.name]: errorMsg
@@ -167,6 +175,22 @@ export default function UploadDocumentsDialog({ onDocumentsUploaded }: UploadDoc
 
         // Check if any files failed to upload using our local tracking
         const hasErrors = Object.keys(uploadErrors).length > 0
+
+        if (successfulUploadCount > 0) {
+          trackEvent('document_upload_completed', {
+            file_count: successfulUploadCount,
+            failed_count: failedUploadCount,
+            storage_id: selectedTenantId
+          })
+        }
+
+        if (failedUploadCount > 0) {
+          trackEvent('document_upload_failed', {
+            file_count: filesToUpload.length,
+            failed_count: failedUploadCount,
+            storage_id: selectedTenantId
+          })
+        }
 
         // Update toast status
         if (hasErrors) {
@@ -191,7 +215,7 @@ export default function UploadDocumentsDialog({ onDocumentsUploaded }: UploadDoc
         setIsUploading(false)
       }
     },
-    [setIsUploading, setProgresses, setFileErrors, t, onDocumentsUploaded]
+    [setIsUploading, setProgresses, setFileErrors, t, onDocumentsUploaded, selectedTenantId]
   )
 
   return (

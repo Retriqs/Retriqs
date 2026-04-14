@@ -69,14 +69,6 @@ export type SettingsUpdateRequest = {
   redis_uri?: string
 }
 
-export type OpenAICodexAuthStatus = {
-  connected: boolean
-  account_id?: string
-  email?: string
-  expires_at?: string
-  expired?: boolean
-}
-
 export type LightragGraphType = {
   nodes: LightragNodeType[]
   edges: LightragEdgeType[]
@@ -1508,36 +1500,6 @@ export const exportStorageArchive = async (storageId: number): Promise<Blob> => 
     responseType: 'blob'
   })
   return response.data
-}
-
-export const getOpenAICodexAuthStatus = async (): Promise<OpenAICodexAuthStatus> => {
-  const response = await axiosInstance.get('/api/settings/oauth/openai-codex/status')
-  return response.data
-}
-
-export const startOpenAICodexAuth = async (): Promise<{
-  state: string
-  authorization_url: string
-  redirect_uri: string
-}> => {
-  const response = await axiosInstance.post('/api/settings/oauth/openai-codex/start')
-  return response.data
-}
-
-export const getOpenAICodexAuthFlowStatus = async (
-  state: string
-): Promise<{
-  state: string
-  status: string
-  error?: string | null
-  connection?: OpenAICodexAuthStatus
-}> => {
-  const response = await axiosInstance.get(`/api/settings/oauth/openai-codex/flow/${state}`)
-  return response.data
-}
-
-export const disconnectOpenAICodexAuth = async (): Promise<void> => {
-  await axiosInstance.delete('/api/settings/oauth/openai-codex')
 }
 
 export const rebuildStorageEmbeddings = async (

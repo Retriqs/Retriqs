@@ -55,6 +55,7 @@ from retriqs.constants import (
     DEFAULT_FILE_PATH_MORE_PLACEHOLDER,
 )
 from retriqs.utils import get_env_value
+import json
 
 from retriqs.kg import (
     STORAGES,
@@ -142,10 +143,10 @@ class LightRAG:
     kv_storage: str = field(default="JsonKVStorage")
     """Storage backend for key-value data."""
 
-    vector_storage: str = field(default="NanoVectorDBStorage")
+    vector_storage: str = field(default="GrafeoVectorStorage")
     """Storage backend for vector embeddings."""
 
-    graph_storage: str = field(default="NetworkXStorage")
+    graph_storage: str = field(default="GrafeoGraphStorage")
     """Storage backend for knowledge graphs."""
 
     doc_status_storage: str = field(default="JsonDocStatusStorage")
@@ -2405,6 +2406,260 @@ class LightRAG:
 
         except Exception as e:
             logger.error(f"Error in ainsert_custom_kg: {e}")
+            raise
+        finally:
+            if update_storage:
+                await self._insert_done()
+
+    async def ainsert_rich_custom_kg(
+        self,
+        custom_kg: dict[str, Any],
+        full_doc_id: str | None = None,
+    ) -> dict[str, int]:
+        update_storage = False
+
+        chunk_count = 0
+        entity_count = 0
+        relationship_count = 0
+
+        try:
+            # -------------------------
+            # Insert chunks
+            # -------------------------
+            all_chunks_data: dict[str, dict[str, Any]] = {}
+            chunk_to_source_map: dict[str, str] = {}
+
+            for chunk_data in custom_kg.get("chunks", []):
+                chunk_content = sanitize_text_for_encoding(str(chunk_data["content"]))
+                source_id = str(chunk_data["source_id"])
+                file_path = str(chunk_data.get("file_path", "custom_kg"))
+                tokens = len(self.tokenizer.encode(chunk_content))
+                chunk_order_index = int(chunk_data.get("chunk_order_index", 0))
+                chunk_id = compute_mdhash_id(chunk_content, prefix="chunk-")
+
+                chunk_entry: dict[str, Any] = {
+                    "content": chunk_content,
+                    "source_id": source_id,
+                    "tokens": tokens,
+                    "chunk_order_index": chunk_order_index,
+                    "full_doc_id": full_doc_id if full_doc_id is not None else source_id,
+                    "file_path": file_path,
+                    "status": DocStatus.PROCESSED,
+
+                    # rich fields
+                    "chunk_type": chunk_data.get("chunk_type"),
+                    "member_id": chunk_data.get("member_id"),
+                    "metadata_json": json.dumps(
+                        chunk_data.get("metadata", {}),
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    ),
+                }
+
+                all_chunks_data[chunk_id] = chunk_entry
+                chunk_to_source_map[source_id] = chunk_id
+                chunk_count += 1
+                update_storage = True
+
+            if all_chunks_data:
+                await asyncio.gather(
+                    self.chunks_vdb.upsert(all_chunks_data),
+                    self.text_chunks.upsert(all_chunks_data),
+                )
+
+            # -------------------------
+            # Insert entities
+            # -------------------------
+            all_entities_data: list[dict[str, Any]] = []
+
+            for entity_data in custom_kg.get("entities", []):
+                entity_id = str(entity_data.get("entity_id") or entity_data["entity_name"])
+                entity_name = str(entity_data.get("entity_name") or entity_id)
+                entity_type = str(entity_data.get("entity_type", "UNKNOWN"))
+                description = str(entity_data.get("description", "No description provided"))
+                source_chunk_source_id = str(entity_data.get("source_id", "UNKNOWN"))
+                source_id = chunk_to_source_map.get(source_chunk_source_id, "UNKNOWN")
+                file_path = str(entity_data.get("file_path", "custom_kg"))
+
+                if source_id == "UNKNOWN":
+                    logger.warning(
+                        "Rich entity '%s' has UNKNOWN source chunk mapping (source_id=%s)",
+                        entity_id,
+                        source_chunk_source_id,
+                    )
+
+                node_data: dict[str, Any] = {
+                    "entity_id": entity_id,
+                    "entity_name": entity_name,
+                    "entity_type": entity_type,
+                    "description": description,
+                    "source_id": source_id,
+                    "file_path": file_path,
+                    "metadata_json": json.dumps(
+                        entity_data.get("metadata", {}),
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    ),
+                    "created_at": int(time.time()),
+                }
+
+                # IMPORTANT: use entity_id as the graph node key
+                await self.chunk_entity_relation_graph.upsert_node(
+                    entity_id,
+                    node_data=node_data,
+                )
+
+                all_entities_data.append(node_data)
+                entity_count += 1
+                update_storage = True
+
+            # -------------------------
+            # Insert relationships
+            # -------------------------
+            all_relationships_data: list[dict[str, Any]] = []
+
+            for relationship_data in custom_kg.get("relationships", []):
+                src_id = str(relationship_data["src_id"])
+                tgt_id = str(relationship_data["tgt_id"])
+                relation_type = str(relationship_data.get("relation_type", "RELATED_TO"))
+                description = str(relationship_data.get("description", ""))
+                keywords = str(relationship_data.get("keywords", ""))
+                weight = float(relationship_data.get("weight", 1.0))
+                source_chunk_source_id = str(relationship_data.get("source_id", "UNKNOWN"))
+                source_id = chunk_to_source_map.get(source_chunk_source_id, "UNKNOWN")
+                file_path = str(relationship_data.get("file_path", "custom_kg"))
+
+                if source_id == "UNKNOWN":
+                    logger.warning(
+                        "Rich relationship src='%s' tgt='%s' has UNKNOWN source chunk mapping (source_id=%s)",
+                        src_id,
+                        tgt_id,
+                        source_chunk_source_id,
+                    )
+
+                # Ensure both nodes exist
+                for need_insert_id in [src_id, tgt_id]:
+                    if not await self.chunk_entity_relation_graph.has_node(need_insert_id):
+                        logger.warning(
+                            "Relationship endpoint node missing, creating placeholder node entity_id=%s",
+                            need_insert_id,
+                        )
+                        await self.chunk_entity_relation_graph.upsert_node(
+                            need_insert_id,
+                            node_data={
+                                "entity_id": need_insert_id,
+                                "entity_name": need_insert_id,
+                                "entity_type": "UNKNOWN",
+                                "description": "UNKNOWN",
+                                "source_id": source_id,
+                                "file_path": file_path,
+                                "metadata_json": "{}",
+                                "created_at": int(time.time()),
+                            },
+                        )
+
+                edge_data: dict[str, Any] = {
+                    "weight": weight,
+                    "relation_type": relation_type,
+                    "description": description,
+                    "keywords": keywords,
+                    "source_id": source_id,
+                    "file_path": file_path,
+                    "metadata_json": json.dumps(
+                        relationship_data.get("metadata", {}),
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    ),
+                    "created_at": int(time.time()),
+                }
+
+                await self.chunk_entity_relation_graph.upsert_edge(
+                    src_id,
+                    tgt_id,
+                    edge_data=edge_data,
+                )
+
+                all_relationships_data.append(
+                    {
+                        "src_id": src_id,
+                        "tgt_id": tgt_id,
+                        "relation_type": relation_type,
+                        "description": description,
+                        "keywords": keywords,
+                        "source_id": source_id,
+                        "weight": weight,
+                        "file_path": file_path,
+                        "metadata_json": edge_data["metadata_json"],
+                        "created_at": edge_data["created_at"],
+                    }
+                )
+
+                relationship_count += 1
+                update_storage = True
+
+            # -------------------------
+            # Insert entities into vector DB
+            # -------------------------
+            entity_vdb_data = {
+                compute_mdhash_id(dp["entity_id"], prefix="ent-"): {
+                    "content": f"{dp['entity_name']}\n{dp['entity_id']}\n{dp['description']}",
+                    "entity_id": dp["entity_id"],
+                    "entity_name": dp["entity_name"],
+                    "source_id": dp["source_id"],
+                    "description": dp["description"],
+                    "entity_type": dp["entity_type"],
+                    "file_path": dp["file_path"],
+                    "metadata_json": dp["metadata_json"],
+                }
+                for dp in all_entities_data
+            }
+            if entity_vdb_data:
+                await self.entities_vdb.upsert(entity_vdb_data)
+
+            # -------------------------
+            # Insert relationships into vector DB
+            # -------------------------
+            relationship_vdb_data = {
+                compute_mdhash_id(
+                    f"{dp['src_id']}|{dp['relation_type']}|{dp['tgt_id']}",
+                    prefix="rel-",
+                ): {
+                    "src_id": dp["src_id"],
+                    "tgt_id": dp["tgt_id"],
+                    "relation_type": dp["relation_type"],
+                    "source_id": dp["source_id"],
+                    "content": (
+                        f"{dp['relation_type']}\t{dp['keywords']}\t{dp['src_id']}\n"
+                        f"{dp['tgt_id']}\n"
+                        f"{dp['description']}"
+                    ),
+                    "keywords": dp["keywords"],
+                    "description": dp["description"],
+                    "weight": dp["weight"],
+                    "file_path": dp["file_path"],
+                    "metadata_json": dp["metadata_json"],
+                }
+                for dp in all_relationships_data
+            }
+            if relationship_vdb_data:
+                await self.relationships_vdb.upsert(relationship_vdb_data)
+
+            logger.info(
+                "Rich KG insert completed full_doc_id=%s chunks=%s entities=%s relationships=%s",
+                full_doc_id,
+                chunk_count,
+                entity_count,
+                relationship_count,
+            )
+
+            return {
+                "chunks_inserted": chunk_count,
+                "entities_inserted": entity_count,
+                "relationships_inserted": relationship_count,
+            }
+
+        except Exception:
+            logger.exception("Error in ainsert_rich_custom_kg full_doc_id=%s", full_doc_id)
             raise
         finally:
             if update_storage:

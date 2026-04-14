@@ -6,7 +6,7 @@ import { Message, QueryRequest } from '@/api/retriqs'
 
 type Theme = 'dark' | 'light' | 'system'
 type Language = 'en' | 'zh' | 'fr' | 'ar' | 'zh_TW'
-type Tab = 'documents' | 'knowledge-graph' | 'retrieval' | 'api' | 'settings' | 'marketplace' | 'feedback'
+type Tab = 'documents' | 'knowledge-graph' | 'chat' | 'api' | 'settings' | 'marketplace' | 'feedback'
 
 interface SettingsState {
   // Document manager settings
@@ -295,7 +295,7 @@ const createSettingsStore = (storageKey: string) =>
           const { theme, ...persistedState } = state
           return persistedState
         },
-        version: 20,
+        version: 21,
         merge: (persistedState, currentState) => {
           const persistedTheme = (persistedState as Partial<SettingsState>)?.theme
           const theme = hasStoredGlobalTheme() ? readGlobalTheme() : (persistedTheme ?? 'system')
@@ -415,6 +415,11 @@ const createSettingsStore = (storageKey: string) =>
           if (version < 20) {
             // Show file names by default on the documents page.
             state.showFileName = true
+          }
+          if (version < 21) {
+            if (state.currentTab === 'retrieval') {
+              state.currentTab = 'chat'
+            }
           }
           return state
         }

@@ -10,10 +10,21 @@ import {
     SelectValue
 } from '@/components/ui/Select'
 import { Key, Globe, Maximize2, Hash, Database, Zap, Layout, Files, HardDrive } from 'lucide-react'
-import { SettingsUpdateRequest } from '@/api/retriqs'
+import {
+    disconnectOpenAICodexAuth,
+    getOpenAICodexAuthFlowStatus,
+    getOpenAICodexAuthStatus,
+    OpenAICodexAuthStatus,
+    SettingsUpdateRequest,
+    startOpenAICodexAuth
+} from '@/api/retriqs'
 import { isRestrictedStorageProvider } from '@/lib/editionPolicy'
 import { UpgradePromptDialog } from '@/components/UpgradePromptDialog'
 import Checkbox from '@/components/ui/Checkbox'
+import Button from '@/components/ui/Button'
+import { toast } from 'sonner'
+import { errorMessage } from '@/lib/utils'
+import { openExternalUrl } from '@/lib/runtime'
 
 interface InstanceSettingsFieldsProps {
     formData: SettingsUpdateRequest
@@ -34,6 +45,8 @@ export const InstanceSettingsFields: React.FC<InstanceSettingsFieldsProps> = ({
 
     const [showUpgradeDialog, setShowUpgradeDialog] = useState(false)
     const [upgradeReason, setUpgradeReason] = useState('')
+    const [openAICodexAuth, setOpenAICodexAuth] = useState<OpenAICodexAuthStatus | null>(null)
+    const [openAICodexBusy, setOpenAICodexBusy] = useState(false)
 
     const handleChange = (field: keyof SettingsUpdateRequest, value: any) => {
         setFormData((prev) => ({ ...prev, [field]: value }))
@@ -63,8 +76,86 @@ export const InstanceSettingsFields: React.FC<InstanceSettingsFieldsProps> = ({
 
     const getDefaultBindingHost = (binding: string) => {
         if (binding === 'openai') return 'https://api.openai.com/v1'
+        if (binding === 'openai_codex') return 'https://chatgpt.com/backend-api/codex'
         if (binding === 'ollama') return 'http://localhost:11434'
+        if (binding === 'codex_cli') return 'codex'
         return ''
+    }
+
+    React.useEffect(() => {
+        let active = true
+        if (formData.llm_binding !== 'openai_codex') {
+            return
+        }
+
+        void getOpenAICodexAuthStatus()
+            .then((status) => {
+                if (active) setOpenAICodexAuth(status)
+            })
+            .catch(() => {
+                if (active) setOpenAICodexAuth({ connected: false })
+            })
+
+        return () => {
+            active = false
+        }
+    }, [formData.llm_binding])
+
+    const pollOpenAICodexAuth = async (state: string) => {
+        const startedAt = Date.now()
+        while (Date.now() - startedAt < 180000) {
+            const flow = await getOpenAICodexAuthFlowStatus(state)
+            if (flow.status === 'completed') {
+                const auth = flow.connection || (await getOpenAICodexAuthStatus())
+                setOpenAICodexAuth(auth)
+                return
+            }
+            if (flow.status === 'error') {
+                throw new Error(flow.error || 'OpenAI Codex authentication failed')
+            }
+            await new Promise((resolve) => window.setTimeout(resolve, 1500))
+        }
+        throw new Error('OpenAI Codex authentication timed out')
+    }
+
+    const handleConnectOpenAICodex = async () => {
+        setOpenAICodexBusy(true)
+        try {
+            const start = await startOpenAICodexAuth()
+            try {
+                await openExternalUrl(start.authorization_url)
+            } catch (openError) {
+                try {
+                    await navigator.clipboard.writeText(start.authorization_url)
+                    toast.info(
+                        `Could not open browser automatically. Login URL copied to clipboard. ${errorMessage(openError)}`
+                    )
+                } catch {
+                    toast.info(
+                        `Could not open browser automatically. Open this URL manually: ${start.authorization_url}`
+                    )
+                }
+            }
+            await pollOpenAICodexAuth(start.state)
+            toast.success('OpenAI ChatGPT/Codex connected')
+        } catch (err) {
+            toast.error(`Failed to connect OpenAI Codex: ${errorMessage(err)}`)
+        } finally {
+            setOpenAICodexBusy(false)
+        }
+    }
+
+    const handleDisconnectOpenAICodex = async () => {
+        setOpenAICodexBusy(true)
+        try {
+            await disconnectOpenAICodexAuth()
+            setOpenAICodexAuth({ connected: false })
+            toast.success('OpenAI ChatGPT/Codex disconnected')
+        } catch (err) {
+            toast.error(`Failed to disconnect OpenAI Codex: ${errorMessage(err)}`)
+        } finally {
+            setOpenAICodexBusy(false)
+        }
     }
 
     const handleStorageProviderChange = (field: keyof SettingsUpdateRequest, value: string) => {
@@ -104,8 +195,9 @@ export const InstanceSettingsFields: React.FC<InstanceSettingsFieldsProps> = ({
                         onValueChange={(val) => {
                             handleChanges({
                                 llm_binding: val,
-                                llm_model: val === 'ollama' ? DEFAULT_OLLAMA_LLM_MODEL : '',
-                                llm_binding_host: getDefaultBindingHost(val)
+                                llm_model: val === 'ollama' ? DEFAULT_OLLAMA_LLM_MODEL : (val === 'openai_codex' ? 'gpt-5.4' : ''),
+                                llm_binding_host: getDefaultBindingHost(val),
+                                llm_binding_api_key: val === 'codex_cli' || val === 'openai_codex' ? '' : formData.llm_binding_api_key
                             })
                         }}
                         disabled={isLlmDisabled}
@@ -115,12 +207,53 @@ export const InstanceSettingsFields: React.FC<InstanceSettingsFieldsProps> = ({
                         </SelectTrigger>
                         <SelectContent>
                             <SelectItem value="openai">OpenAI (GPT-4o, etc.)</SelectItem>
+                            <SelectItem value="openai_codex">OpenAI ChatGPT/Codex Login</SelectItem>
+                            <SelectItem value="codex_cli">Codex CLI (ChatGPT Login)</SelectItem>
                             <SelectItem value="ollama">Ollama (Local)</SelectItem>
                             {/* <SelectItem value="gemini">Google Gemini</SelectItem> */}
                             {/* <SelectItem value="azure_openai">Azure OpenAI</SelectItem> */}
                         </SelectContent>
                     </Select>
-                    {formData.llm_binding === 'openai' && (
+                    {formData.llm_binding === 'codex_cli' && (
+                        <p className="text-[10px] text-muted-foreground">
+                            Uses local `codex` CLI login. No API key required. `CLI Path` defaults to `codex`.
+                        </p>
+                    )}
+                    {formData.llm_binding === 'openai_codex' && (
+                        <div className="space-y-3 rounded-md border border-border/50 bg-muted/20 p-3">
+                            <p className="text-[10px] text-muted-foreground">
+                                Sign in with your ChatGPT/Codex account. Retriqs opens the official OpenAI login flow and stores local OAuth tokens for this app.
+                            </p>
+                            <div className="flex flex-wrap items-center gap-2">
+                                <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => void handleConnectOpenAICodex()}
+                                    disabled={openAICodexBusy || isLlmDisabled}
+                                >
+                                    {openAICodexBusy ? 'Connecting...' : (openAICodexAuth?.connected ? 'Reconnect' : 'Connect OpenAI')}
+                                </Button>
+                                {openAICodexAuth?.connected && (
+                                    <Button
+                                        type="button"
+                                        size="sm"
+                                        variant="ghost"
+                                        onClick={() => void handleDisconnectOpenAICodex()}
+                                        disabled={openAICodexBusy || isLlmDisabled}
+                                    >
+                                        Disconnect
+                                    </Button>
+                                )}
+                            </div>
+                            <div className="text-[10px] text-muted-foreground">
+                                Status: {openAICodexAuth?.connected
+                                    ? `Connected${openAICodexAuth.email ? ` as ${openAICodexAuth.email}` : ''}`
+                                    : 'Not connected'}
+                            </div>
+                        </div>
+                    )}
+                    {(formData.llm_binding === 'openai' || formData.llm_binding === 'openai_codex') && (
                         <div 
                             className={`flex items-start space-x-2 mt-2 p-3 bg-amber-500/5 focus-within:ring-1 focus-within:ring-amber-500/20 border border-amber-500/20 rounded-md transition-colors ${
                                 isLlmConsentEditable ? 'cursor-pointer hover:bg-amber-500/10' : 'cursor-not-allowed opacity-70'
@@ -172,7 +305,7 @@ export const InstanceSettingsFields: React.FC<InstanceSettingsFieldsProps> = ({
                             <Input
                                 value={formData.llm_model}
                                 onChange={(e) => handleChange('llm_model', e.target.value)}
-                                placeholder="gpt-4o-mini"
+                                placeholder={formData.llm_binding === 'openai_codex' ? 'gpt-5.4' : 'gpt-4o-mini'}
                                 disabled={isLlmDisabled}
                             />
                         )}
@@ -207,7 +340,7 @@ export const InstanceSettingsFields: React.FC<InstanceSettingsFieldsProps> = ({
                 </div>
 
                 <div className="space-y-2">
-                    <Text text="API Host" className="text-xs font-bold uppercase" />
+                    <Text text={formData.llm_binding === 'codex_cli' ? 'CLI Path' : 'API Host'} className="text-xs font-bold uppercase" />
                     <div className="relative">
                         <Globe className="text-muted-foreground absolute top-3 left-3 h-4 w-4" />
                         <Input
@@ -219,7 +352,7 @@ export const InstanceSettingsFields: React.FC<InstanceSettingsFieldsProps> = ({
                     </div>
                 </div>
 
-                {formData.llm_binding !== 'ollama' && (
+                {formData.llm_binding !== 'ollama' && formData.llm_binding !== 'codex_cli' && formData.llm_binding !== 'openai_codex' && (
                     <div className="space-y-2">
                         <Text text="API Key" className="text-xs font-bold uppercase" />
                         <div className="relative">
@@ -416,14 +549,15 @@ export const InstanceSettingsFields: React.FC<InstanceSettingsFieldsProps> = ({
                             <Text text="Graph Storage" className="text-xs font-bold uppercase text-muted-foreground" />
                         </div>
                         <Select
-                            value={formData.lightrag_graph_storage || 'NetworkXStorage'}
+                            value={formData.lightrag_graph_storage || 'GrafeoGraphStorage'}
                             onValueChange={(val) => handleStorageProviderChange('lightrag_graph_storage', val)}
                             disabled={isStorageDisabled}
                         >
                             <SelectTrigger className="bg-background border-none shadow-none focus:ring-0">
-                                <SelectValue placeholder="Select Graph Storage" />
+                            <SelectValue placeholder="Select Graph Storage" />
                             </SelectTrigger>
                             <SelectContent>
+                                <SelectItem value="GrafeoGraphStorage">Grafeo</SelectItem>
                                 <SelectItem value="NetworkXStorage">NetworkX (Local / File-based)</SelectItem>
                                 <SelectItem value="Neo4JStorage">Neo4J (External DB)</SelectItem>
                             </SelectContent>
@@ -440,14 +574,15 @@ export const InstanceSettingsFields: React.FC<InstanceSettingsFieldsProps> = ({
                             <Text text="Vector Storage" className="text-xs font-bold uppercase text-muted-foreground" />
                         </div>
                         <Select
-                            value={formData.lightrag_vector_storage || 'NanoVectorDBStorage'}
+                            value={formData.lightrag_vector_storage || 'GrafeoVectorStorage'}
                             onValueChange={(val) => handleStorageProviderChange('lightrag_vector_storage', val)}
                             disabled={isStorageDisabled}
                         >
                             <SelectTrigger className="bg-background border-none shadow-none focus:ring-0">
-                                <SelectValue placeholder="Select Vector Storage" />
+                            <SelectValue placeholder="Select Vector Storage" />
                             </SelectTrigger>
                             <SelectContent>
+                                <SelectItem value="GrafeoVectorStorage">Grafeo</SelectItem>
                                 <SelectItem value="MilvusVectorDBStorage">Milvus (Scaleable / Production)</SelectItem>
                                 <SelectItem value="NanoVectorDBStorage">NanoVectorDB (Local / Fast)</SelectItem>
                             </SelectContent>

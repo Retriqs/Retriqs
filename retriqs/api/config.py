@@ -52,8 +52,8 @@ logger = logging.getLogger("lightrag")
 
 class DefaultRAGStorageConfig:
     KV_STORAGE = "JsonKVStorage"
-    VECTOR_STORAGE = "NanoVectorDBStorage"
-    GRAPH_STORAGE = "NetworkXStorage"
+    VECTOR_STORAGE = "GrafeoVectorStorage"
+    GRAPH_STORAGE = "GrafeoGraphStorage"
     DOC_STATUS_STORAGE = "JsonDocStatusStorage"
 
 
@@ -61,6 +61,10 @@ def get_default_host(binding_type: str) -> str:
     default_hosts = {
         "ollama": os.getenv("LLM_BINDING_HOST", "http://localhost:11434"),
         "lollms": os.getenv("LLM_BINDING_HOST", "http://localhost:9600"),
+        "openai_codex": os.getenv(
+            "LLM_BINDING_HOST", "https://chatgpt.com/backend-api/codex"
+        ),
+        "codex_cli": os.getenv("LLM_BINDING_HOST", "codex"),
         "azure_openai": os.getenv("AZURE_OPENAI_ENDPOINT", "https://api.openai.com/v1"),
         "openai": os.getenv("LLM_BINDING_HOST", "https://api.openai.com/v1"),
         "gemini": os.getenv(
@@ -276,6 +280,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         choices=[
             "lollms",
             "ollama",
+            "openai_codex",
+            "codex_cli",
             "openai",
             "openai-ollama",
             "azure_openai",
@@ -355,12 +361,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             idx = sys.argv.index("--llm-binding")
             if idx + 1 < len(sys.argv) and sys.argv[idx + 1] in [
                 "openai",
+                "openai_codex",
                 "azure_openai",
             ]:
                 OpenAILLMOptions.add_args(parser)
         except IndexError:
             pass
-    elif os.environ.get("LLM_BINDING") in ["openai", "azure_openai"]:
+    elif os.environ.get("LLM_BINDING") in ["openai", "openai_codex", "azure_openai"]:
         OpenAILLMOptions.add_args(parser)
 
     if "--llm-binding" in sys.argv:
@@ -759,7 +766,10 @@ def build_storage_args(storage, base_args=None):
         elif attr_name == "redis_uri":
             instance_args.redis_uri = setting.value
         elif attr_name == "embedding_binding_api_key":
-            logger.info(f"Setting embedding_binding_api_key for storage {storage.id} from setting value {setting.value}")
+            logger.info(
+                "Setting embedding_binding_api_key for storage %s (value hidden)",
+                storage.id,
+            )
             instance_args.embedding_binding_api_key = setting.value
         elif attr_name == "embedding_binding_host":
             logger.info(f"Setting embedding_binding_host for storage {storage.id} from setting value {setting.value}")

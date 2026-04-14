@@ -9,7 +9,7 @@
   "header": {
     "documents": "Documents",
     "knowledgeGraph": "Knowledge Graph",
-    "retrieval": "Retrieval",
+    "retrieval": "Chat",
     "api": "API",
     "settings": "Settings Page",
     "marketplace": "Marketplace",
@@ -418,7 +418,7 @@
       "thinkingInProgress": "Thinking in progress..."
     },
     "retrieval": {
-      "startPrompt": "Start a retrieval by typing your query below",
+      "startPrompt": "Start a chat by typing your query below",
       "clear": "Clear",
       "send": "Send",
       "placeholder": "Enter your query",

@@ -21,7 +21,6 @@ import FeedbackPage from '@/features/FeedbackPage'
 import MarketplacePage from './features/MarketplacePage'
 import { WelcomeOverlay } from '@/components/WelcomeOverlay'
 import { FloatingFeedback } from '@/components/FloatingFeedback'
-
 import { Tabs, TabsContent } from '@/components/ui/Tabs'
 
 // Inner component that consumes TenantContext
@@ -173,16 +172,20 @@ function AppContent() {
 
   // Sync tab with URL
   useEffect(() => {
+    if (pathname === '/retrieval') {
+      navigate('/chat', { replace: true })
+      return
+    }
+
     const tabName = pathname.slice(1) // Get tab name from path
     if (tabName && tabName !== currentTab) {
       // Validate tab name
-      const validTabs = ['documents', 'knowledge-graph', 'retrieval', 'api', 'settings', 'marketplace', 'feedback']
+      const validTabs = ['documents', 'knowledge-graph', 'chat', 'api', 'settings', 'marketplace', 'feedback']
       if (validTabs.includes(tabName)) {
         useSettingsStore.getState().setCurrentTab(tabName as any)
       }
     }
-  }, [pathname, currentTab])
-
+  }, [pathname, currentTab, navigate])
 
   const handleTabChange = useCallback(
     (tab: string) => navigate(`/${tab}`),
@@ -262,7 +265,7 @@ function AppContent() {
                   <GraphViewer />
                 </TabsContent>
                 <TabsContent
-                  value="retrieval"
+                  value="chat"
                   className="absolute top-0 right-0 bottom-0 left-0 overflow-hidden"
                 >
                   <RetrievalTesting />
@@ -319,4 +322,3 @@ function App() {
 }
 
 export default App
-

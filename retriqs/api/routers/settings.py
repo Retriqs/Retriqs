@@ -30,6 +30,8 @@ from retriqs.api.edition import (
     get_restricted_provider_fields,
 )
 from retriqs.api.storage_archive import (
+    GRAFEO_VECTOR_ARCHIVE_FILES,
+    NANO_VECTOR_ARCHIVE_FILES,
     StorageArchiveError,
     analyze_storage_merge,
     apply_storage_merge,
@@ -40,6 +42,7 @@ from retriqs.api.storage_archive import (
     extract_storage_archive,
     get_merge_analysis_record,
     normalize_storage_settings,
+    _vector_archive_files,
     storage_archive_http_exception,
     validate_archive_structure,
 )
@@ -59,6 +62,7 @@ import httpx
 import json
 from datetime import datetime, timezone
 from retriqs.utils import compute_mdhash_id
+from retriqs.api.openai_codex_auth import get_openai_codex_auth_manager
 
 logger = logging.getLogger("lightrag")
 router = APIRouter(prefix="/api/settings", tags=["Settings"])
@@ -84,10 +88,10 @@ class SettingsUpdate(BaseModel):
     rerank_binding: Optional[str] = "null"
 
     # Storage Configuration
-    lightrag_graph_storage: Optional[str] = "NetworkXStorage"
+    lightrag_graph_storage: Optional[str] = "GrafeoGraphStorage"
     lightrag_kv_storage: Optional[str] = "JsonKVStorage"
     lightrag_doc_status_storage: Optional[str] = "JsonDocStatusStorage"
-    lightrag_vector_storage: Optional[str] = "NanoVectorDBStorage"
+    lightrag_vector_storage: Optional[str] = "GrafeoVectorStorage"
     neo4j_uri: Optional[str] = None
     neo4j_username: Optional[str] = None
     neo4j_password: Optional[str] = None
@@ -124,13 +128,17 @@ class StorageMergeApplyRequest(BaseModel):
     conflict_mode: str
 
 
+class OpenAICodexAuthStatusResponse(BaseModel):
+    connected: bool
+    account_id: Optional[str] = None
+    email: Optional[str] = None
+    expires_at: Optional[str] = None
+    expired: Optional[bool] = None
+
+
 MARKETPLACE_ARCHIVE_ALLOWED_HOST = "d2nx8b3pezm5w7.cloudfront.net"
 MARKETPLACE_ARCHIVE_ALLOWED_PATH_PREFIXES = ("/public/graphs/",)
-VECTOR_ARCHIVE_FILES = {
-    "vdb_chunks.json",
-    "vdb_entities.json",
-    "vdb_relationships.json",
-}
+VECTOR_ARCHIVE_FILES = set(NANO_VECTOR_ARCHIVE_FILES) | set(GRAFEO_VECTOR_ARCHIVE_FILES)
 VECTOR_INDEX_CACHE_FILES = {
     "bm25_chunks.pkl",
     "bm25_entities.pkl",
@@ -140,8 +148,6 @@ NEEDS_REEMBEDDING_KEY = "NEEDS_REEMBEDDING"
 EMBEDDING_SETTING_KEYS = {
     "EMBEDDING_BINDING",
     "EMBEDDING_MODEL",
-    "EMBEDDING_BINDING_HOST",
-    "EMBEDDING_BINDING_API_KEY",
     "EMBEDDING_DIM",
     "EMBEDDING_TOKEN_LIMIT",
     "EMBEDDING_SEND_DIM",
@@ -775,6 +781,31 @@ async def fetch_settings():
     return get_db_settings()
 
 
+@router.get("/oauth/openai-codex/status")
+async def get_openai_codex_oauth_status():
+    manager = get_openai_codex_auth_manager()
+    return manager.get_connection_status()
+
+
+@router.post("/oauth/openai-codex/start")
+async def start_openai_codex_oauth():
+    manager = get_openai_codex_auth_manager()
+    return manager.start_login()
+
+
+@router.get("/oauth/openai-codex/flow/{state}")
+async def get_openai_codex_oauth_flow_status(state: str):
+    manager = get_openai_codex_auth_manager()
+    return manager.get_flow_status(state)
+
+
+@router.delete("/oauth/openai-codex")
+async def logout_openai_codex_oauth():
+    manager = get_openai_codex_auth_manager()
+    manager.clear_token()
+    return {"status": "success"}
+
+
 @router.get("/graph_storages")
 async def fetch_graph_storages():
     """Returns all current storages from SQLite"""
@@ -1020,7 +1051,9 @@ async def import_storage_archive(
         added_storage_id = added_storage.id
 
         archive_excludes = (
-            VECTOR_ARCHIVE_FILES if selected_embedding_import_mode == "local_reembed" else None
+            set(_vector_archive_files(manifest.storage_settings))
+            if selected_embedding_import_mode == "local_reembed"
+            else None
         )
         extract_storage_archive(
             temp_archive_path,

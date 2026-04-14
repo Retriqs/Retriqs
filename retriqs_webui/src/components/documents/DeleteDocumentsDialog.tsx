@@ -13,6 +13,7 @@ import Input from '@/components/ui/Input'
 import { toast } from 'sonner'
 import { errorMessage } from '@/lib/utils'
 import { deleteDocuments } from '@/api/retriqs'
+import { trackEvent } from '@/lib/analytics'
 
 import { TrashIcon, AlertTriangleIcon } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
@@ -75,6 +76,11 @@ export default function DeleteDocumentsDialog({
       )
 
       if (result.status === 'deletion_started') {
+        trackEvent('documents_deleted', {
+          document_count: selectedDocIds.length,
+          delete_file: deleteFile,
+          delete_llm_cache: deleteLLMCache
+        })
         toast.success(t('documentPanel.deleteDocuments.success', { count: selectedDocIds.length }))
       } else if (result.status === 'busy') {
         toast.error(t('documentPanel.deleteDocuments.busy'))

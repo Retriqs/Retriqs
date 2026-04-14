@@ -6,6 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import Button from '@/components/ui/Button'
 import { getAuthStatus, waitForBackendHealth } from '@/api/retriqs'
 import { useAuthStore } from '@/stores/state'
+import { trackEvent } from '@/lib/analytics'
 
 const BackendConnectPage = () => {
   const navigate = useNavigate()
@@ -21,7 +22,6 @@ const BackendConnectPage = () => {
     setConnecting(true)
     setErrorMessage(null)
     setStatusMessage('Checking backend health...')
-
     try {
       await waitForBackendHealth()
 
@@ -30,6 +30,10 @@ const BackendConnectPage = () => {
       console.log('[connect] Auth status after backend health check:', status)
 
       if (!status.auth_configured && status.access_token) {
+        trackEvent('backend_connect_succeeded', {
+          auth_configured: status.auth_configured,
+          has_access_token: Boolean(status.access_token)
+        })
         login(
           status.access_token,
           true,
@@ -44,11 +48,18 @@ const BackendConnectPage = () => {
 
       const message =
         'Backend is reachable, but desktop startup did not receive a guest token from /auth-status.'
+      trackEvent('backend_connect_failed', {
+        error_code: 'missing_guest_token'
+      })
       setErrorMessage(message)
       toast.error(message)
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to connect to backend'
       console.error('[connect] Backend reconnect failed:', error)
+      trackEvent('backend_connect_failed', {
+        error_code: 'health_check_failed',
+        error_message: message
+      })
       setErrorMessage(message)
       toast.error(message)
     } finally {

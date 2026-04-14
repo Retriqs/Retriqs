@@ -49,10 +49,10 @@ DEFAULT_CONFIG = {
     "SSL_KEYFILE": "None",
     "TOKEN_SECRET": "lightrag-jwt-default-secret",
     # --- Storage Configuration ---
-    "LIGHTRAG_GRAPH_STORAGE": "NetworkXStorage",
+    "LIGHTRAG_GRAPH_STORAGE": "GrafeoGraphStorage",
     "LIGHTRAG_KV_STORAGE": "JsonKVStorage",
     "LIGHTRAG_DOC_STATUS_STORAGE": "JsonDocStatusStorage",
-    "LIGHTRAG_VECTOR_STORAGE": "NanoVectorDBStorage",
+    "LIGHTRAG_VECTOR_STORAGE": "GrafeoVectorStorage",
     "NEO4J_URI": "bolt://localhost:7687",
     "NEO4J_USERNAME": "neo4j",
     "NEO4J_PASSWORD": "neo4j",

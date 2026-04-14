@@ -9,7 +9,7 @@
   "header": {
     "documents": "المستندات",
     "knowledgeGraph": "شبكة المعرفة",
-    "retrieval": "الاسترجاع",
+    "retrieval": "الدردشة",
     "api": "واجهة برمجة التطبيقات",
     "projectRepository": "مستودع المشروع",
     "logout": "تسجيل الخروج",
@@ -388,7 +388,7 @@
       "thinkingInProgress": "التفكير قيد التقدم..."
     },
     "retrieval": {
-      "startPrompt": "ابدأ الاسترجاع بكتابة استفسارك أدناه",
+      "startPrompt": "ابدأ الدردشة بكتابة استفسارك أدناه",
       "clear": "مسح",
       "send": "إرسال",
       "placeholder": "اكتب استفسارك (بادئة وضع الاستعلام: /<Query Mode>)",

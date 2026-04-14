@@ -9,7 +9,7 @@
   "header": {
     "documents": "Documents",
     "knowledgeGraph": "Graphe de connaissances",
-    "retrieval": "Récupération",
+    "retrieval": "Chat",
     "api": "API",
     "projectRepository": "Référentiel du projet",
     "logout": "Déconnexion",
@@ -388,7 +388,7 @@
       "thinkingInProgress": "Réflexion en cours..."
     },
     "retrieval": {
-      "startPrompt": "Démarrez une récupération en tapant votre requête ci-dessous",
+      "startPrompt": "Démarrez un chat en saisissant votre requête ci-dessous",
       "clear": "Effacer",
       "send": "Envoyer",
       "placeholder": "Tapez votre requête (Préfixe de requête : /<Query Mode>)",

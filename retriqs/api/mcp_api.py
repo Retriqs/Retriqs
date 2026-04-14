@@ -15,6 +15,23 @@ from retriqs.api.mcp_support import (
 logger = logging.getLogger("lightrag")
 
 
+def _patch_streamable_http_route_methods(app) -> None:
+    """
+    FastMCP 3.0.0b1 can build the no-auth streamable HTTP route without explicit
+    methods, which leaves mounted ASGI setups responding with 405 to POST /initialize.
+
+    Retriqs mounts the returned app under /mcp, so we normalize the root MCP route
+    here until upstream fixes the beta transport helper.
+    """
+    for route in getattr(app, "routes", []):
+        if getattr(route, "path", None) != "/":
+            continue
+        methods = getattr(route, "methods", None)
+        if methods:
+            continue
+        route.methods = {"GET", "POST", "DELETE"}
+
+
 def create_mcp_server(rag_manager):
     """
     Explicit MCP server for retrieval-only tools.
@@ -364,4 +381,6 @@ def create_mcp_server(rag_manager):
         )
         return json.dumps(payload, ensure_ascii=False, indent=2)
 
-    return mcp.http_app(path="/")
+    app = mcp.http_app(path="/")
+    _patch_streamable_http_route_methods(app)
+    return app

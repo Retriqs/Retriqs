@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import Button from '@/components/ui/Button'
 import Input from '@/components/ui/Input'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/Tabs'
@@ -14,18 +14,20 @@ import { Loader2, Plus, ChevronDown, ChevronUp } from 'lucide-react'
 import { InstanceSettingsFields } from '@/components/InstanceSettingsFields'
 import {
   createNewStorage,
-  importStorageArchive,
   SettingsUpdateRequest
 } from '@/api/retriqs'
-import { getTenantCreateActionLabel, isStorageArchiveFile } from '@/components/tenantCreateDialogUtils'
+import { getTenantCreateActionLabel } from '@/components/tenantCreateDialogUtils'
 import { toast } from 'sonner'
 import { errorMessage } from '@/lib/utils'
 import { useTenant } from '@/contexts/TenantContext'
+import { StorageArchiveImportFlow } from '@/components/StorageArchiveImportFlow'
+import { trackEvent, trackFunnelStep } from '@/lib/analytics'
 
 interface StorageCreateDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   onStorageCreated?: () => void
+  initialName?: string
 }
 
 const defaultInstanceSettings: SettingsUpdateRequest = {
@@ -43,10 +45,10 @@ const defaultInstanceSettings: SettingsUpdateRequest = {
   max_async: 1,
   rerank_binding: 'null',
   id: 0,
-  lightrag_graph_storage: 'NetworkXStorage',
+  lightrag_graph_storage: 'GrafeoGraphStorage',
   lightrag_kv_storage: 'JsonKVStorage',
   lightrag_doc_status_storage: 'JsonDocStatusStorage',
-  lightrag_vector_storage: 'NanoVectorDBStorage',
+  lightrag_vector_storage: 'GrafeoVectorStorage',
   neo4j_uri: 'bolt://localhost:7687',
   neo4j_username: 'neo4j',
   neo4j_password: 'neo4j',
@@ -61,6 +63,7 @@ export const StorageCreateDialog: React.FC<StorageCreateDialogProps> = ({
   open,
   onOpenChange,
   onStorageCreated,
+  initialName,
 }) => {
   const { loadTenants, setSelectedTenant } = useTenant()
   const [creatingInstance, setCreatingInstance] = useState(false)
@@ -68,7 +71,14 @@ export const StorageCreateDialog: React.FC<StorageCreateDialogProps> = ({
   const [newInstanceFormData, setNewInstanceFormData] = useState<SettingsUpdateRequest>(defaultInstanceSettings)
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [createMode, setCreateMode] = useState<'blank' | 'import'>('blank')
-  const [importArchiveFile, setImportArchiveFile] = useState<File | null>(null)
+
+  useEffect(() => {
+    if (!open) {
+      return
+    }
+
+    setNewInstanceName(initialName || '')
+  }, [initialName, open])
 
   const resetCreateDialog = () => {
     setCreatingInstance(false)
@@ -76,7 +86,6 @@ export const StorageCreateDialog: React.FC<StorageCreateDialogProps> = ({
     setNewInstanceFormData(defaultInstanceSettings)
     setShowAdvanced(false)
     setCreateMode('blank')
-    setImportArchiveFile(null)
   }
 
   const normalizeModelForProvider = (binding: string, model: string) => {
@@ -89,38 +98,28 @@ export const StorageCreateDialog: React.FC<StorageCreateDialogProps> = ({
   const handleCreateInstance = async () => {
     if (!newInstanceName.trim()) {
       toast.error('Please enter a name for the new instance')
+      trackEvent('storage_create_failed', {
+        error_code: 'missing_name'
+      })
       return
     }
 
-    if (createMode === 'import') {
-      if (!isStorageArchiveFile(importArchiveFile)) {
-        toast.error('Please select a storage archive to import')
-        return
-      }
-
-      setCreatingInstance(true)
-      try {
-        const result = await importStorageArchive(newInstanceName.trim(), importArchiveFile)
-        toast.success(`Instance "${result.storage.name}" imported successfully!`)
-        await loadTenants()
-        setSelectedTenant(result.storage.id)
-        onOpenChange(false)
-        resetCreateDialog()
-        onStorageCreated?.()
-      } catch (err) {
-        toast.error(`Failed to import archive: ${errorMessage(err)}`)
-      } finally {
-        setCreatingInstance(false)
-      }
-      return
-    }
-
-    if ((newInstanceFormData.llm_binding === 'openai' || newInstanceFormData.embedding_binding === 'openai') && !(newInstanceFormData as any).openai_consent) {
+    if (((newInstanceFormData.llm_binding === 'openai' || newInstanceFormData.llm_binding === 'openai_codex') || newInstanceFormData.embedding_binding === 'openai') && !(newInstanceFormData as any).openai_consent) {
       toast.error('Please agree to the External Data Processing terms to use OpenAI.')
+      trackEvent('storage_create_failed', {
+        error_code: 'missing_openai_consent'
+      })
       return
     }
 
     setCreatingInstance(true)
+    trackEvent('storage_create_started', {
+      create_mode: createMode,
+      has_advanced_settings: showAdvanced
+    })
+    trackFunnelStep('activation', 'storage_create_started', 3, {
+      create_mode: createMode
+    })
     try {
       const normalizedNewInstanceData: SettingsUpdateRequest = {
         ...newInstanceFormData,
@@ -129,12 +128,24 @@ export const StorageCreateDialog: React.FC<StorageCreateDialogProps> = ({
       }
       const result = await createNewStorage(newInstanceName.trim(), normalizedNewInstanceData)
       toast.success(`Instance "${result.storage.name}" created successfully!`)
+      trackEvent('storage_created', {
+        storage_id: result.storage.id,
+        storage_name: result.storage.name,
+        create_mode: createMode
+      })
+      trackFunnelStep('activation', 'storage_created', 4, {
+        storage_id: result.storage.id
+      })
       await loadTenants()
       setSelectedTenant(result.storage.id)
       onOpenChange(false)
       resetCreateDialog()
       onStorageCreated?.()
     } catch (err) {
+      trackEvent('storage_create_failed', {
+        create_mode: createMode,
+        error_message: errorMessage(err)
+      })
       toast.error(`Failed to create instance: ${errorMessage(err)}`)
     } finally {
       setCreatingInstance(false)
@@ -145,6 +156,9 @@ export const StorageCreateDialog: React.FC<StorageCreateDialogProps> = ({
     <Dialog
       open={open}
       onOpenChange={(nextOpen) => {
+        if (nextOpen) {
+          trackEvent('storage_create_dialog_opened')
+        }
         onOpenChange(nextOpen)
         if (!nextOpen) {
           resetCreateDialog()
@@ -159,7 +173,17 @@ export const StorageCreateDialog: React.FC<StorageCreateDialogProps> = ({
           </DialogDescription>
         </DialogHeader>
         <div className="flex-1 min-h-0 overflow-y-auto px-4 sm:px-6 py-4">
-          <Tabs value={createMode} onValueChange={(value) => setCreateMode(value as 'blank' | 'import')} className="space-y-4">
+          <Tabs
+            value={createMode}
+            onValueChange={(value) => {
+              const nextMode = value as 'blank' | 'import'
+              setCreateMode(nextMode)
+              trackEvent('storage_create_mode_changed', {
+                create_mode: nextMode
+              })
+            }}
+            className="space-y-4"
+          >
             <TabsList className="grid w-full grid-cols-2">
               <TabsTrigger value="blank">Blank Instance</TabsTrigger>
               <TabsTrigger value="import">Import Archive</TabsTrigger>
@@ -199,50 +223,43 @@ export const StorageCreateDialog: React.FC<StorageCreateDialogProps> = ({
               )}
             </TabsContent>
             <TabsContent value="import" className="mt-0 space-y-4">
-              <div className="space-y-2">
-                <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Instance Name</label>
-                <Input
-                  placeholder="e.g., Imported-Storage"
-                  value={newInstanceName}
-                  onChange={(e) => setNewInstanceName(e.target.value)}
-                />
-              </div>
-              <div className="space-y-2">
-                <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Storage Archive</label>
-                <Input
-                  type="file"
-                  accept=".zip,application/zip"
-                  onChange={(e) => {
-                    const selectedFile = e.target.files?.[0] || null
-                    setImportArchiveFile(selectedFile)
-                  }}
-                />
-                <p className="text-xs text-muted-foreground">
-                  Upload a developer-exported storage archive. Import will restore the embedded graph and storage settings.
-                </p>
-              </div>
+              <StorageArchiveImportFlow
+                open={open && createMode === 'import'}
+                source="custom"
+                allowedModes={['new']}
+                lockedMode="new"
+                initialName={newInstanceName}
+                onCompleted={() => {
+                  onOpenChange(false)
+                  resetCreateDialog()
+                  void loadTenants()
+                  onStorageCreated?.()
+                }}
+              />
             </TabsContent>
           </Tabs>
         </div>
-        <DialogFooter className="sticky bottom-0 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80 border-t px-4 sm:px-6 py-3">
-          <Button
-            variant="ghost"
-            onClick={() => {
-              onOpenChange(false)
-              resetCreateDialog()
-            }}
-            disabled={creatingInstance}
-          >
-            Cancel
-          </Button>
-          <Button
-            onClick={() => void handleCreateInstance()}
-            disabled={creatingInstance || !newInstanceName.trim() || (createMode === 'import' && !isStorageArchiveFile(importArchiveFile))}
-          >
-            {creatingInstance ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />}
-            {getTenantCreateActionLabel(createMode)}
-          </Button>
-        </DialogFooter>
+        {createMode === 'blank' && (
+          <DialogFooter className="sticky bottom-0 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80 border-t px-4 sm:px-6 py-3">
+            <Button
+              variant="ghost"
+              onClick={() => {
+                onOpenChange(false)
+                resetCreateDialog()
+              }}
+              disabled={creatingInstance}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={() => void handleCreateInstance()}
+              disabled={creatingInstance || !newInstanceName.trim()}
+            >
+              {creatingInstance ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />}
+              {getTenantCreateActionLabel(createMode)}
+            </Button>
+          </DialogFooter>
+        )}
       </DialogContent>
     </Dialog>
   )
