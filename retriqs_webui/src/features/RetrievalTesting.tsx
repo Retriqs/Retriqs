@@ -40,6 +40,7 @@ import { toast } from 'sonner'
 import { copyToClipboard } from '@/utils/clipboard'
 import type { QueryMode } from '@/api/retriqs'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/Popover'
+import { trackEvent } from '@/lib/analytics'
 
 // Helper function to generate unique IDs with browser compatibility
 const generateUniqueId = () => {
@@ -144,7 +145,7 @@ export default function RetrievalTesting() {
   const { t } = useTranslation()
   const { selectedTenantId } = useTenant()
   const currentTab = useSettingsStore.use.currentTab()
-  const isRetrievalTabActive = currentTab === 'retrieval'
+  const isRetrievalTabActive = currentTab === 'chat'
 
   const [messages, setMessages] = useState<RetrievalMessage[]>([])
   const [selectedMessageId, setSelectedMessageId] = useState<string | null>(null)
@@ -430,8 +431,23 @@ export default function RetrievalTesting() {
             resolvedChatId = response.chat_id
           }
         }
+        trackEvent('query_completed', {
+          mode: effectiveMode,
+          stream: state.querySettings.stream,
+          has_trace: Boolean(assistantMessage.trace),
+          has_references: Boolean(assistantMessage.references?.length),
+          response_length: assistantMessage.content.length,
+          storage_id: selectedTenantId
+        })
       } catch (err) {
-        updateAssistantMessage(`${t('retrievePanel.retrieval.error')}\n${errorMessage(err)}`, true)
+        const queryFailure = errorMessage(err)
+        trackEvent('query_failed', {
+          mode: effectiveMode,
+          stream: state.querySettings.stream,
+          error_message: queryFailure,
+          storage_id: selectedTenantId
+        })
+        updateAssistantMessage(`${t('retrievePanel.retrieval.error')}\n${queryFailure}`, true)
       } finally {
         setIsLoading(false)
         isReceivingResponseRef.current = false

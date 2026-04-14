@@ -11,7 +11,7 @@ authors = [
 description = "Retriqs: Simple and Fast Retrieval-Augmented Generation"
 readme = "README.md"
 license = {text = "MIT"}
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 classifiers = [
     "Development Status :: 4 - Beta",
     "Programming Language :: Python :: 3",
@@ -28,6 +28,7 @@ dependencies = [
     "json_repair",
     "nano-vectordb",
     "networkx",
+    "nuitka>=4.0.2",
     "numpy>=1.24.0,<2.0.0",
     "pandas>=2.0.0,<2.4.0",
     "pipmaster",
@@ -97,6 +98,7 @@ api = [
     "SQLAlchemy>=2.0.0,<3.0.0",
     "fastapi-mcp",
     "fastmcp",
+    "grafeo>=0.5.35",
 ]
 
 # Advanced document processing engine (optional)

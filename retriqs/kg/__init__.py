@@ -15,6 +15,7 @@ STORAGE_IMPLEMENTATIONS = {
             "PGGraphStorage",
             "MongoGraphStorage",
             "MemgraphStorage",
+            "GrafeoGraphStorage",
         ],
         "required_methods": ["upsert_node", "upsert_edge"],
     },
@@ -27,6 +28,7 @@ STORAGE_IMPLEMENTATIONS = {
             "QdrantVectorDBStorage",
             "MongoVectorDBStorage",
             # "ChromaVectorDBStorage",
+            "GrafeoVectorStorage",
         ],
         "required_methods": ["query", "upsert"],
     },
@@ -121,6 +123,8 @@ STORAGES = {
     "FaissVectorDBStorage": ".kg.faiss_impl",
     "QdrantVectorDBStorage": ".kg.qdrant_impl",
     "MemgraphStorage": ".kg.memgraph_impl",
+    "GrafeoGraphStorage": ".kg.grafeo_impl",
+    "GrafeoVectorStorage": ".kg.grafeo_impl",
 }
 
 

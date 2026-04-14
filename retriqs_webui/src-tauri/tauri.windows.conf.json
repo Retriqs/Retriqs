@@ -1,5 +1,6 @@
 {
   "bundle": {
+    "targets": ["msi", "nsis"],
     "windows": {
       "signCommand": "powershell -ExecutionPolicy Bypass -File ../../scripts/sign_windows_artifact.ps1 %1"
     }

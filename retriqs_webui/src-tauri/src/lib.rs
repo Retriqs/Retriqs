@@ -23,6 +23,10 @@ use tauri::{
   AppHandle, Manager, RunEvent, WindowEvent,
 };
 
+#[cfg(target_os = "windows")]
+const BACKEND_EXECUTABLE_NAMES: &[&str] = &["retriqs-backend.exe", "retriqs-backend"];
+#[cfg(not(target_os = "windows"))]
+const BACKEND_EXECUTABLE_NAMES: &[&str] = &["retriqs-backend", "retriqs-backend.exe"];
 const BACKEND_URL: &str = "http://127.0.0.1:9621";
 const HEALTH_URL: &str = "http://127.0.0.1:9621/health";
 const BACKEND_STARTUP_TIMEOUT: Duration = Duration::from_secs(45);
@@ -58,6 +62,49 @@ fn get_backend_runtime() -> BackendRuntime {
   BackendRuntime {
     backend_base_url: BACKEND_URL.to_string(),
     desktop: true,
+  }
+}
+
+#[tauri::command]
+fn open_external_url(url: String) -> Result<(), String> {
+  #[cfg(target_os = "windows")]
+  {
+    let mut command = Command::new("rundll32");
+    command
+      .arg("url.dll,FileProtocolHandler")
+      .arg(&url)
+      .stdin(Stdio::null())
+      .stdout(Stdio::null())
+      .stderr(Stdio::null())
+      .creation_flags(CREATE_NO_WINDOW);
+    command
+      .spawn()
+      .map_err(|error| format!("Failed to open external URL: {error}"))?;
+    return Ok(());
+  }
+
+  #[cfg(target_os = "macos")]
+  {
+    Command::new("open")
+      .arg(&url)
+      .stdin(Stdio::null())
+      .stdout(Stdio::null())
+      .stderr(Stdio::null())
+      .spawn()
+      .map_err(|error| format!("Failed to open external URL: {error}"))?;
+    return Ok(());
+  }
+
+  #[cfg(all(unix, not(target_os = "macos")))]
+  {
+    Command::new("xdg-open")
+      .arg(&url)
+      .stdin(Stdio::null())
+      .stdout(Stdio::null())
+      .stderr(Stdio::null())
+      .spawn()
+      .map_err(|error| format!("Failed to open external URL: {error}"))?;
+    return Ok(());
   }
 }
 
@@ -142,39 +189,35 @@ fn terminate_managed_backend(app: &AppHandle) {
   }
 }
 
+fn backend_candidate_paths(base_dir: PathBuf) -> Vec<PathBuf> {
+  BACKEND_EXECUTABLE_NAMES
+    .iter()
+    .map(|name| base_dir.join(name))
+    .collect()
+}
+
 fn backend_search_paths(app: &AppHandle) -> Vec<PathBuf> {
-  let manifest_backend = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+  let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
     .join("backend")
-    .join("retriqs-backend")
-    .join("retriqs-backend.exe");
-  let release_backend = env::current_exe()
+    .join("retriqs-backend");
+  let release_dir = env::current_exe()
     .ok()
     .and_then(|path| path.parent().map(|dir| dir.to_path_buf()))
-    .map(|dir| {
-      dir
-        .join("backend")
-        .join("retriqs-backend")
-        .join("retriqs-backend.exe")
-    });
-  let resource_backend = app
+    .map(|dir| dir.join("backend").join("retriqs-backend"));
+  let resource_dir = app
     .path()
     .resource_dir()
     .ok()
-    .map(|dir| {
-      dir
-        .join("backend")
-        .join("retriqs-backend")
-        .join("retriqs-backend.exe")
-    });
+    .map(|dir| dir.join("backend").join("retriqs-backend"));
 
   let mut candidates = Vec::new();
-  if let Some(path) = resource_backend {
-    candidates.push(path);
+  if let Some(dir) = resource_dir {
+    candidates.extend(backend_candidate_paths(dir));
   }
-  if let Some(path) = release_backend {
-    candidates.push(path);
+  if let Some(dir) = release_dir {
+    candidates.extend(backend_candidate_paths(dir));
   }
-  candidates.push(manifest_backend);
+  candidates.extend(backend_candidate_paths(manifest_dir));
   candidates
 }
 
@@ -332,7 +375,10 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
 
 pub fn run() {
   let builder = tauri::Builder::default()
-    .invoke_handler(tauri::generate_handler![get_backend_runtime])
+    .invoke_handler(tauri::generate_handler![
+      get_backend_runtime,
+      open_external_url
+    ])
     .manage(DesktopState::default())
     .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
       show_main_window(app);

@@ -41,6 +41,9 @@ from ..config import global_args
 import json
 import math
 import tempfile
+from uuid import uuid4
+import hashlib
+
 
 @lru_cache(maxsize=1)
 def _is_docling_available() -> bool:
@@ -1117,6 +1120,316 @@ def _clean_record(record: dict[str, Any]) -> dict[str, Any]:
         k: _safe_value(v)
         for k, v in record.items()
         if k not in excluded
+    }
+
+# document_routes.py
+
+import hashlib
+import json
+from typing import Any, Dict, List, Tuple
+
+
+def _json_preview(value: Any, max_len: int = 500) -> str:
+    try:
+        text = json.dumps(value, ensure_ascii=False, sort_keys=True)
+    except Exception:
+        text = str(value)
+    return text if len(text) <= max_len else text[:max_len] + "...(truncated)"
+
+
+def _safe_metadata_json(value: Any) -> str:
+    if value is None:
+        return "{}"
+    try:
+        return json.dumps(value, ensure_ascii=False, sort_keys=True)
+    except Exception:
+        return "{}"
+
+
+def _build_full_doc_id(file_name: str, file_bytes: bytes) -> str:
+    digest = hashlib.md5(file_name.encode("utf-8") + b"::" + file_bytes).hexdigest()
+    return f"doc-{digest}"
+
+
+def _normalize_rich_kg_payload(
+    payload: Dict[str, Any],
+    file_name: str,
+    request_id: str,
+) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    if not isinstance(payload, dict):
+        raise ValueError("Top-level JSON must be an object/dict")
+
+    for key in ("chunks", "entities", "relationships"):
+        if key not in payload:
+            raise ValueError(f"Missing required top-level key: '{key}'")
+        if not isinstance(payload[key], list):
+            raise ValueError(f"Top-level key '{key}' must be a list")
+
+    normalized: Dict[str, Any] = {
+        "chunks": [],
+        "entities": [],
+        "relationships": [],
+        "stats": payload.get("stats", {}),
+    }
+
+    validation = {
+        "invalid_chunks": 0,
+        "invalid_entities": 0,
+        "invalid_relationships": 0,
+        "duplicate_chunk_source_ids": 0,
+        "duplicate_entity_ids": 0,
+        "missing_chunk_sources_for_entities": 0,
+        "missing_chunk_sources_for_relationships": 0,
+        "missing_entity_refs_for_relationships": 0,
+        "examples": [],
+    }
+
+    chunk_source_ids: set[str] = set()
+    entity_ids: set[str] = set()
+
+    # ---- chunks ----
+    for idx, raw in enumerate(payload["chunks"]):
+        if not isinstance(raw, dict):
+            validation["invalid_chunks"] += 1
+            validation["examples"].append(
+                {"section": "chunks", "index": idx, "reason": "item is not an object"}
+            )
+            continue
+
+        content = raw.get("content")
+        source_id = raw.get("source_id")
+
+        if not content or not source_id:
+            validation["invalid_chunks"] += 1
+            validation["examples"].append(
+                {
+                    "section": "chunks",
+                    "index": idx,
+                    "reason": "missing required fields: content/source_id",
+                    "item_preview": _json_preview(raw),
+                }
+            )
+            continue
+
+        source_id = str(source_id)
+        if source_id in chunk_source_ids:
+            validation["duplicate_chunk_source_ids"] += 1
+            logger.warning(
+                "[rich-kg-upload][%s] duplicate chunk source_id=%s index=%s",
+                request_id,
+                source_id,
+                idx,
+            )
+
+        chunk_source_ids.add(source_id)
+
+        normalized["chunks"].append(
+            {
+                "content": str(content),
+                "source_id": source_id,
+                "file_path": str(raw.get("file_path") or file_name),
+                "chunk_order_index": int(raw.get("chunk_order_index", 0)),
+                "chunk_type": raw.get("chunk_type"),
+                "member_id": raw.get("member_id"),
+                "metadata": raw.get("metadata", {}),
+            }
+        )
+
+    # ---- entities ----
+    for idx, raw in enumerate(payload["entities"]):
+        if not isinstance(raw, dict):
+            validation["invalid_entities"] += 1
+            validation["examples"].append(
+                {"section": "entities", "index": idx, "reason": "item is not an object"}
+            )
+            continue
+
+        entity_id = raw.get("entity_id") or raw.get("entity_name")
+        entity_name = raw.get("entity_name") or raw.get("entity_id")
+        source_id = raw.get("source_id")
+
+        if not entity_id or not entity_name or not source_id:
+            validation["invalid_entities"] += 1
+            validation["examples"].append(
+                {
+                    "section": "entities",
+                    "index": idx,
+                    "reason": "missing required fields: entity_id/entity_name/source_id",
+                    "item_preview": _json_preview(raw),
+                }
+            )
+            continue
+
+        entity_id = str(entity_id)
+        entity_name = str(entity_name)
+        source_id = str(source_id)
+
+        if entity_id in entity_ids:
+            validation["duplicate_entity_ids"] += 1
+            logger.warning(
+                "[rich-kg-upload][%s] duplicate entity_id=%s index=%s",
+                request_id,
+                entity_id,
+                idx,
+            )
+
+        if source_id not in chunk_source_ids:
+            validation["missing_chunk_sources_for_entities"] += 1
+            logger.warning(
+                "[rich-kg-upload][%s] entity references missing chunk source_id=%s entity_id=%s",
+                request_id,
+                source_id,
+                entity_id,
+            )
+
+        entity_ids.add(entity_id)
+
+        normalized["entities"].append(
+            {
+                "entity_id": entity_id,
+                "entity_name": entity_name,
+                "entity_type": str(raw.get("entity_type") or "UNKNOWN"),
+                "description": str(raw.get("description") or "No description provided"),
+                "source_id": source_id,
+                "file_path": str(raw.get("file_path") or file_name),
+                "metadata": raw.get("metadata", {}),
+            }
+        )
+
+    # ---- relationships ----
+    for idx, raw in enumerate(payload["relationships"]):
+        if not isinstance(raw, dict):
+            validation["invalid_relationships"] += 1
+            validation["examples"].append(
+                {
+                    "section": "relationships",
+                    "index": idx,
+                    "reason": "item is not an object",
+                }
+            )
+            continue
+
+        src_id = raw.get("src_id")
+        tgt_id = raw.get("tgt_id")
+        source_id = raw.get("source_id")
+
+        if not src_id or not tgt_id or not source_id:
+            validation["invalid_relationships"] += 1
+            validation["examples"].append(
+                {
+                    "section": "relationships",
+                    "index": idx,
+                    "reason": "missing required fields: src_id/tgt_id/source_id",
+                    "item_preview": _json_preview(raw),
+                }
+            )
+            continue
+
+        src_id = str(src_id)
+        tgt_id = str(tgt_id)
+        source_id = str(source_id)
+
+        if source_id not in chunk_source_ids:
+            validation["missing_chunk_sources_for_relationships"] += 1
+            logger.warning(
+                "[rich-kg-upload][%s] relationship references missing chunk source_id=%s src=%s tgt=%s",
+                request_id,
+                source_id,
+                src_id,
+                tgt_id,
+            )
+
+        if src_id not in entity_ids or tgt_id not in entity_ids:
+            validation["missing_entity_refs_for_relationships"] += 1
+            logger.warning(
+                "[rich-kg-upload][%s] relationship references missing entity nodes src=%s tgt=%s",
+                request_id,
+                src_id,
+                tgt_id,
+            )
+
+        normalized["relationships"].append(
+            {
+                "src_id": src_id,
+                "tgt_id": tgt_id,
+                "relation_type": str(raw.get("relation_type") or "RELATED_TO"),
+                "description": str(raw.get("description") or ""),
+                "keywords": str(raw.get("keywords") or ""),
+                "weight": float(raw.get("weight", 1.0)),
+                "source_id": source_id,
+                "file_path": str(raw.get("file_path") or file_name),
+                "metadata": raw.get("metadata", {}),
+            }
+        )
+
+    if len(validation["examples"]) > 20:
+        validation["examples"] = validation["examples"][:20]
+
+    return normalized, validation
+
+
+async def upload_rich_kg_file_to_rag(
+    rag: LightRAG,
+    file_bytes: bytes,
+    file_name: str,
+    request_id: str,
+) -> Dict[str, Any]:
+    try:
+        payload = json.loads(file_bytes.decode("utf-8"))
+    except Exception as e:
+        raise ValueError(f"Invalid JSON file: {e}") from e
+
+    normalized_kg, validation = _normalize_rich_kg_payload(
+        payload=payload,
+        file_name=file_name,
+        request_id=request_id,
+    )
+
+    payload_summary = {
+        "chunks": len(payload.get("chunks", [])) if isinstance(payload.get("chunks"), list) else 0,
+        "entities": len(payload.get("entities", [])) if isinstance(payload.get("entities"), list) else 0,
+        "relationships": len(payload.get("relationships", [])) if isinstance(payload.get("relationships"), list) else 0,
+        "has_stats": isinstance(payload.get("stats"), dict),
+    }
+
+    normalized_summary = {
+        "chunks": len(normalized_kg["chunks"]),
+        "entities": len(normalized_kg["entities"]),
+        "relationships": len(normalized_kg["relationships"]),
+    }
+
+    logger.info(
+        "[rich-kg-upload][%s] payload parsed file=%s payload_summary=%s normalized_summary=%s validation=%s",
+        request_id,
+        file_name,
+        _json_preview(payload_summary),
+        _json_preview(normalized_summary),
+        _json_preview(validation),
+    )
+
+    if not normalized_kg["chunks"]:
+        raise ValueError("No valid chunks found in uploaded rich KG")
+    if not normalized_kg["entities"]:
+        raise ValueError("No valid entities found in uploaded rich KG")
+    if not normalized_kg["relationships"]:
+        raise ValueError("No valid relationships found in uploaded rich KG")
+
+    full_doc_id = _build_full_doc_id(file_name=file_name, file_bytes=file_bytes)
+
+    insert_result = await rag.ainsert_rich_custom_kg(
+        custom_kg=normalized_kg,
+        full_doc_id=full_doc_id,
+    )
+
+    return {
+        "status": "success",
+        "file_name": file_name,
+        "full_doc_id": full_doc_id,
+        "payload_summary": payload_summary,
+        "normalized_summary": normalized_summary,
+        "validation": validation,
+        "insert_result": insert_result,
+        "stats_from_file": payload.get("stats", {}),
     }
 
 
@@ -2517,6 +2830,74 @@ def create_document_routes(
             message="Scanning process has been initiated in the background",
             track_id=track_id,
         )
+
+    @router.post("/upload_rich_kg_file", response_model=Any)
+    async def upload_rich_kg_file(
+        file: UploadFile = File(...),
+        rag: LightRAG = Depends(rag_dependency),
+    ):
+        request_id = uuid4().hex[:8]
+
+        try:
+            logger.info(
+                "[rich-kg-upload][%s] started filename=%s content_type=%s",
+                request_id,
+                file.filename,
+                getattr(file, "content_type", None),
+            )
+
+            if not file.filename:
+                raise HTTPException(status_code=400, detail="Missing filename")
+
+            if not file.filename.lower().endswith(".json"):
+                raise HTTPException(status_code=400, detail="Only .json files are supported")
+
+            file_bytes = await file.read()
+            if not file_bytes:
+                raise HTTPException(status_code=400, detail="Uploaded file is empty")
+
+            result = await upload_rich_kg_file_to_rag(
+                rag=rag,
+                file_bytes=file_bytes,
+                file_name=file.filename,
+                request_id=request_id,
+            )
+
+            logger.info(
+                "[rich-kg-upload][%s] completed filename=%s chunks=%s entities=%s relationships=%s",
+                request_id,
+                file.filename,
+                result["payload_summary"]["chunks"],
+                result["payload_summary"]["entities"],
+                result["payload_summary"]["relationships"],
+            )
+            return result
+
+        except HTTPException:
+            logger.warning(
+                "[rich-kg-upload][%s] request rejected filename=%s",
+                request_id,
+                file.filename,
+            )
+            raise
+        except ValueError as e:
+            logger.warning(
+                "[rich-kg-upload][%s] validation error filename=%s error=%s",
+                request_id,
+                file.filename,
+                str(e),
+            )
+            raise HTTPException(status_code=400, detail=str(e))
+        except Exception as e:
+            logger.exception(
+                "[rich-kg-upload][%s] unhandled error filename=%s",
+                request_id,
+                file.filename,
+            )
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to upload rich KG file: {e}",
+            )
     
     @router.post("/upload_custom_kg_file", response_model=Any)
     async def upload_custom_kg_file(

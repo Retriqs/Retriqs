@@ -2,6 +2,7 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
 import AppRouter from './AppRouter'
+import { initAnalytics } from './lib/analytics'
 import { initializeRuntime } from './lib/runtime'
 import './i18n.ts';
 import 'katex/dist/katex.min.css';
@@ -11,6 +12,7 @@ import 'katex/contrib/copy-tex'; // Allow copying rendered formulas as LaTeX sou
 
 async function bootstrap() {
   await initializeRuntime()
+  initAnalytics()
 
   createRoot(document.getElementById('root')!).render(
     <StrictMode>

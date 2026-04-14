@@ -4,6 +4,7 @@ import { useAuthStore } from '@/stores/state'
 import { cn } from '@/lib/utils'
 import { useTranslation } from 'react-i18next'
 import { navigationService } from '@/services/navigation'
+import { resetAnalytics } from '@/lib/analytics'
 import { LogOutIcon, Sun, Moon } from 'lucide-react'
 import { TenantSelector } from '@/components/TenantSelector'
 import useTheme from '@/hooks/useTheme'
@@ -43,7 +44,7 @@ function TabsNavigation() {
         <NavigationTab to="/knowledge-graph">
           {t('header.knowledgeGraph')}
         </NavigationTab>
-        <NavigationTab to="/retrieval">
+        <NavigationTab to="/chat">
           {t('header.retrieval')}
         </NavigationTab>
         <NavigationTab to="/marketplace">
@@ -70,12 +71,12 @@ function ThemeToggle() {
     >
       <div className="relative h-4 w-4">
         <Sun className={cn(
-          "h-full w-full absolute transition-all duration-500 transform",
-          theme === 'dark' ? "rotate-0 scale-100 opacity-100" : "-rotate-90 scale-0 opacity-0"
+          'h-full w-full absolute transition-all duration-500 transform',
+          theme === 'dark' ? 'rotate-0 scale-100 opacity-100' : '-rotate-90 scale-0 opacity-0'
         )} />
         <Moon className={cn(
-          "h-full w-full absolute transition-all duration-500 transform",
-          theme === 'dark' ? "rotate-90 scale-0 opacity-0" : "rotate-0 scale-100 opacity-100"
+          'h-full w-full absolute transition-all duration-500 transform',
+          theme === 'dark' ? 'rotate-90 scale-0 opacity-0' : 'rotate-0 scale-100 opacity-100'
         )} />
       </div>
     </Button>
@@ -87,6 +88,7 @@ export default function SiteHeader() {
   const { isGuestMode, username } = useAuthStore()
 
   const handleLogout = () => {
+    resetAnalytics()
     navigationService.navigateToLogin()
   }
 
@@ -121,4 +123,3 @@ export default function SiteHeader() {
     </header>
   )
 }
-

@@ -16,6 +16,7 @@ from typing import Any, Literal
 
 import networkx as nx
 from fastapi import HTTPException
+from retriqs.namespace import NameSpace
 
 
 ARCHIVE_VERSION = 2
@@ -27,25 +28,38 @@ ARCHIVE_RESERVED_METADATA_FILES = {
     ARCHIVE_LEGACY_MANIFEST_NAME,
 }
 
-FILE_BASED_STORAGE_REQUIREMENTS = {
-    "LIGHTRAG_GRAPH_STORAGE": "NetworkXStorage",
-    "LIGHTRAG_KV_STORAGE": "JsonKVStorage",
-    "LIGHTRAG_DOC_STATUS_STORAGE": "JsonDocStatusStorage",
-    "LIGHTRAG_VECTOR_STORAGE": "NanoVectorDBStorage",
+FILE_BASED_STORAGE_OPTIONS = {
+    "LIGHTRAG_GRAPH_STORAGE": {"NetworkXStorage", "GrafeoGraphStorage"},
+    "LIGHTRAG_KV_STORAGE": {"JsonKVStorage"},
+    "LIGHTRAG_DOC_STATUS_STORAGE": {"JsonDocStatusStorage"},
+    "LIGHTRAG_VECTOR_STORAGE": {"NanoVectorDBStorage", "GrafeoVectorStorage"},
 }
 
-REQUIRED_ARCHIVE_FILES = [
+COMMON_REQUIRED_ARCHIVE_FILES = [
     "bm25_chunks.pkl",
     "bm25_entities.pkl",
     "bm25_relationships.pkl",
-    "graph_chunk_entity_relation.graphml",
     "kv_store_doc_status.json",
     "kv_store_full_docs.json",
     "kv_store_text_chunks.json",
     "kv_store_llm_response_cache.json",
+]
+NANO_VECTOR_ARCHIVE_FILES = [
     "vdb_chunks.json",
     "vdb_entities.json",
     "vdb_relationships.json",
+]
+NETWORKX_GRAPH_ARCHIVE_FILES = ["graph_chunk_entity_relation.graphml"]
+GRAFEO_GRAPH_ARCHIVE_FILES = [f"grafeo_{NameSpace.GRAPH_STORE_CHUNK_ENTITY_RELATION}.db"]
+GRAFEO_VECTOR_ARCHIVE_FILES = [
+    f"grafeo_{NameSpace.VECTOR_STORE_CHUNKS}.db",
+    f"grafeo_{NameSpace.VECTOR_STORE_ENTITIES}.db",
+    f"grafeo_{NameSpace.VECTOR_STORE_RELATIONSHIPS}.db",
+]
+REQUIRED_ARCHIVE_FILES = [
+    *COMMON_REQUIRED_ARCHIVE_FILES,
+    *NETWORKX_GRAPH_ARCHIVE_FILES,
+    *NANO_VECTOR_ARCHIVE_FILES,
 ]
 BM25_ARCHIVE_FILES = [
     "bm25_chunks.pkl",
@@ -78,6 +92,8 @@ JSON_NAMESPACE_SPECS = {
     "kv_store_entity_chunks.json": {"type": "dict"},
     "kv_store_relation_chunks.json": {"type": "dict"},
     "kv_store_llm_response_cache.json": {"type": "dict"},
+}
+NANO_VECTOR_JSON_NAMESPACE_SPECS = {
     "vdb_chunks.json": {"type": "vdb"},
     "vdb_entities.json": {"type": "vdb"},
     "vdb_relationships.json": {"type": "vdb"},
@@ -162,11 +178,39 @@ def sanitize_exported_storage_settings(settings: dict[str, str]) -> dict[str, st
 
 
 def validate_file_based_storage_settings(settings: dict[str, str]) -> None:
-    for key, expected in FILE_BASED_STORAGE_REQUIREMENTS.items():
-        if settings.get(key) != expected:
+    for key, accepted_values in FILE_BASED_STORAGE_OPTIONS.items():
+        if settings.get(key) not in accepted_values:
+            accepted = ", ".join(sorted(accepted_values))
             raise StorageArchiveError(
-                f"Storage archives only support file-based backends. Expected {key}={expected}."
+                f"Storage archives only support file-based backends. Expected {key} to be one of: {accepted}."
             )
+
+
+def _graph_archive_files(settings: dict[str, str]) -> list[str]:
+    if settings.get("LIGHTRAG_GRAPH_STORAGE") == "GrafeoGraphStorage":
+        return list(GRAFEO_GRAPH_ARCHIVE_FILES)
+    return list(NETWORKX_GRAPH_ARCHIVE_FILES)
+
+
+def _vector_archive_files(settings: dict[str, str]) -> list[str]:
+    if settings.get("LIGHTRAG_VECTOR_STORAGE") == "GrafeoVectorStorage":
+        return list(GRAFEO_VECTOR_ARCHIVE_FILES)
+    return list(NANO_VECTOR_ARCHIVE_FILES)
+
+
+def get_required_archive_files(settings: dict[str, str]) -> list[str]:
+    return [
+        *COMMON_REQUIRED_ARCHIVE_FILES,
+        *_graph_archive_files(settings),
+        *_vector_archive_files(settings),
+    ]
+
+
+def _json_namespace_specs_for_settings(settings: dict[str, str]) -> dict[str, dict[str, str]]:
+    specs = dict(JSON_NAMESPACE_SPECS)
+    if settings.get("LIGHTRAG_VECTOR_STORAGE") != "GrafeoVectorStorage":
+        specs.update(NANO_VECTOR_JSON_NAMESPACE_SPECS)
+    return specs
 
 
 def validate_required_archive_settings(settings: dict[str, str]) -> None:
@@ -184,7 +228,7 @@ def validate_required_archive_settings(settings: dict[str, str]) -> None:
         raise StorageArchiveError("Archive EMBEDDING_DIM must be a positive integer") from exc
 
 
-def _validate_required_storage_files(storage_dir: str) -> None:
+def _validate_required_storage_files(storage_dir: str, required_files: list[str]) -> None:
     base_dir = Path(storage_dir)
     if not base_dir.is_dir():
         raise StorageArchiveError(f"Storage directory does not exist: {storage_dir}")
@@ -201,8 +245,14 @@ def _validate_required_storage_files(storage_dir: str) -> None:
 
     missing_files = [
         required_file
-        for required_file in REQUIRED_ARCHIVE_FILES
-        if not (base_dir / PurePosixPath(required_file)).is_file()
+        for required_file in required_files
+        if not (
+            (base_dir / PurePosixPath(required_file)).is_file()
+            or (
+                (base_dir / PurePosixPath(required_file)).is_dir()
+                and any((base_dir / PurePosixPath(required_file)).rglob("*"))
+            )
+        )
     ]
     if missing_files:
         raise StorageArchiveError(
@@ -218,7 +268,8 @@ def build_archive_manifest(
     normalized_settings = normalize_storage_settings(storage_settings)
     validate_file_based_storage_settings(normalized_settings)
     validate_required_archive_settings(normalized_settings)
-    _validate_required_storage_files(storage_dir)
+    required_files = get_required_archive_files(normalized_settings)
+    _validate_required_storage_files(storage_dir, required_files)
     export_settings = sanitize_exported_storage_settings(normalized_settings)
     return StorageArchiveManifest(
         archive_version=ARCHIVE_VERSION,
@@ -226,7 +277,7 @@ def build_archive_manifest(
         source_storage_id=getattr(storage, "id", None),
         exported_at=datetime.now(timezone.utc).isoformat(),
         backend_scope="file-based",
-        required_files=list(REQUIRED_ARCHIVE_FILES),
+        required_files=required_files,
         storage_settings=export_settings,
     )
 
@@ -318,7 +369,10 @@ def validate_archive_structure(archive: zipfile.ZipFile) -> StorageArchiveManife
         names.add(normalized)
 
     missing_files = sorted(
-        required_file for required_file in manifest.required_files if required_file not in names
+        required_file
+        for required_file in manifest.required_files
+        if required_file not in names
+        and not any(name.startswith(f"{required_file}/") for name in names)
     )
     if missing_files:
         raise StorageArchiveError(
@@ -490,11 +544,13 @@ def _save_json_file(path: Path, payload: Any) -> None:
 def _load_namespace_records(storage_dir: Path, filename: str) -> tuple[dict[str, Any], Any]:
     payload = _load_json_file(storage_dir / filename)
     if payload is None:
-        if JSON_NAMESPACE_SPECS[filename]["type"] == "vdb":
+        if filename in NANO_VECTOR_JSON_NAMESPACE_SPECS:
             return {}, {"embedding_dim": 0, "data": []}
         return {}, {}
 
-    namespace_type = JSON_NAMESPACE_SPECS[filename]["type"]
+    namespace_type = (
+        JSON_NAMESPACE_SPECS.get(filename) or NANO_VECTOR_JSON_NAMESPACE_SPECS.get(filename)
+    )["type"]
     if namespace_type == "dict":
         if not isinstance(payload, dict):
             raise StorageArchiveError(f"{filename} must contain a JSON object")
@@ -538,7 +594,7 @@ def _apply_json_namespace_merge(
         if conflict_mode == "archive_wins":
             target_records[key] = copy.deepcopy(archive_value)
 
-    if JSON_NAMESPACE_SPECS[filename]["type"] == "dict":
+    if filename in JSON_NAMESPACE_SPECS:
         _save_json_file(target_dir / filename, target_records)
         return result
 
@@ -551,7 +607,7 @@ def _apply_json_namespace_merge(
     target_payload["data"] = [target_records[key] for key in sorted(target_records)]
 
     # Handle NanoVectorDB matrix reconstruction for 'vdb' type
-    if JSON_NAMESPACE_SPECS[filename]["type"] == "vdb":
+    if filename in NANO_VECTOR_JSON_NAMESPACE_SPECS:
         import numpy as np
         import zlib
         import base64
@@ -781,6 +837,38 @@ def _compare_binary_files(
     return result, conflicts
 
 
+def _compare_directory_trees(
+    target_dir: Path,
+    archive_dir: Path,
+    roots: list[str],
+    namespace: str,
+) -> tuple[MergeNamespaceResult, list[dict[str, Any]]]:
+    result = MergeNamespaceResult()
+    conflicts: list[dict[str, Any]] = []
+
+    for root in roots:
+        target_files = _list_relative_files(target_dir, root)
+        archive_files = _list_relative_files(archive_dir, root)
+        for relative_path, archive_hash in archive_files.items():
+            if relative_path not in target_files:
+                result.additions += 1
+                continue
+            if target_files[relative_path] == archive_hash:
+                result.no_ops += 1
+                continue
+            result.conflicts += 1
+            conflicts.append(
+                {
+                    "namespace": namespace,
+                    "key": relative_path,
+                    "target_preview": target_files[relative_path],
+                    "archive_preview": archive_hash,
+                }
+            )
+
+    return result, conflicts
+
+
 def _apply_binary_file_merge(
     target_dir: Path,
     archive_dir: Path,
@@ -798,6 +886,28 @@ def _apply_binary_file_merge(
         if not target_path.exists() or conflict_mode == "archive_wins":
             target_path.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(archive_path, target_path)
+
+    return result
+
+
+def _apply_directory_tree_merge(
+    target_dir: Path,
+    archive_dir: Path,
+    roots: list[str],
+    conflict_mode: ConflictMode,
+    namespace: str,
+) -> MergeNamespaceResult:
+    result, _ = _compare_directory_trees(target_dir, archive_dir, roots, namespace)
+
+    for root in roots:
+        archive_files = _list_relative_files(archive_dir, root)
+        target_files = _list_relative_files(target_dir, root)
+        for relative_path in archive_files:
+            archive_path = archive_dir / PurePosixPath(relative_path)
+            target_path = target_dir / PurePosixPath(relative_path)
+            if relative_path not in target_files or conflict_mode == "archive_wins":
+                target_path.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(archive_path, target_path)
 
     return result
 
@@ -871,6 +981,13 @@ def analyze_storage_merge(
     target_settings_map = normalize_storage_settings(target_settings)
     validate_file_based_storage_settings(target_settings_map)
     validate_required_archive_settings(target_settings_map)
+    json_namespace_specs = _json_namespace_specs_for_settings(target_settings_map)
+    uses_grafeo_graph = (
+        target_settings_map.get("LIGHTRAG_GRAPH_STORAGE") == "GrafeoGraphStorage"
+    )
+    uses_grafeo_vector = (
+        target_settings_map.get("LIGHTRAG_VECTOR_STORAGE") == "GrafeoVectorStorage"
+    )
 
     with zipfile.ZipFile(archive_path, "r") as archive:
         manifest = validate_archive_structure(archive)
@@ -909,7 +1026,7 @@ def analyze_storage_merge(
         target_dir = Path(storage_dir)
         archive_dir = Path(extracted_dir)
 
-        for filename in JSON_NAMESPACE_SPECS:
+        for filename in json_namespace_specs:
             target_records, _ = _load_namespace_records(target_dir, filename)
             archive_records, _ = _load_namespace_records(archive_dir, filename)
             namespace_result, namespace_conflicts = _compare_keyed_payloads(
@@ -921,12 +1038,34 @@ def analyze_storage_merge(
             summary["conflicts"] += namespace_result.conflicts
             conflicts.extend(namespace_conflicts)
 
-        graph_result, graph_conflicts = _compare_graphs(target_dir, archive_dir)
-        summary["namespaces"][GRAPH_FILE_NAME] = graph_result.__dict__
+        if uses_grafeo_graph:
+            graph_result, graph_conflicts = _compare_directory_trees(
+                target_dir,
+                archive_dir,
+                GRAFEO_GRAPH_ARCHIVE_FILES,
+                "graph",
+            )
+            summary["namespaces"]["graph"] = graph_result.__dict__
+        else:
+            graph_result, graph_conflicts = _compare_graphs(target_dir, archive_dir)
+            summary["namespaces"][GRAPH_FILE_NAME] = graph_result.__dict__
         summary["additions"] += graph_result.additions
         summary["no_ops"] += graph_result.no_ops
         summary["conflicts"] += graph_result.conflicts
         conflicts.extend(graph_conflicts)
+
+        if uses_grafeo_vector:
+            vector_result, vector_conflicts = _compare_directory_trees(
+                target_dir,
+                archive_dir,
+                GRAFEO_VECTOR_ARCHIVE_FILES,
+                "vector",
+            )
+            summary["namespaces"]["vector"] = vector_result.__dict__
+            summary["additions"] += vector_result.additions
+            summary["no_ops"] += vector_result.no_ops
+            summary["conflicts"] += vector_result.conflicts
+            conflicts.extend(vector_conflicts)
 
         input_result, input_conflicts = _compare_input_files(target_dir, archive_dir)
         summary["namespaces"]["input"] = input_result.__dict__
@@ -992,17 +1131,46 @@ def apply_storage_merge(
     target_dir = Path(storage_dir)
     archive_dir = Path(record.extracted_dir)
     merged_counts = {"additions": 0, "no_ops": 0, "conflicts": 0}
+    target_settings_map = record.archive_manifest.storage_settings
+    json_namespace_specs = _json_namespace_specs_for_settings(target_settings_map)
+    uses_grafeo_graph = (
+        target_settings_map.get("LIGHTRAG_GRAPH_STORAGE") == "GrafeoGraphStorage"
+    )
+    uses_grafeo_vector = (
+        target_settings_map.get("LIGHTRAG_VECTOR_STORAGE") == "GrafeoVectorStorage"
+    )
 
-    for filename in JSON_NAMESPACE_SPECS:
+    for filename in json_namespace_specs:
         result = _apply_json_namespace_merge(target_dir, archive_dir, filename, conflict_mode)
         merged_counts["additions"] += result.additions
         merged_counts["no_ops"] += result.no_ops
         merged_counts["conflicts"] += result.conflicts
 
-    graph_result = _apply_graph_merge(target_dir, archive_dir, conflict_mode)
+    if uses_grafeo_graph:
+        graph_result = _apply_directory_tree_merge(
+            target_dir,
+            archive_dir,
+            GRAFEO_GRAPH_ARCHIVE_FILES,
+            conflict_mode,
+            "graph",
+        )
+    else:
+        graph_result = _apply_graph_merge(target_dir, archive_dir, conflict_mode)
     merged_counts["additions"] += graph_result.additions
     merged_counts["no_ops"] += graph_result.no_ops
     merged_counts["conflicts"] += graph_result.conflicts
+
+    if uses_grafeo_vector:
+        vector_result = _apply_directory_tree_merge(
+            target_dir,
+            archive_dir,
+            GRAFEO_VECTOR_ARCHIVE_FILES,
+            conflict_mode,
+            "vector",
+        )
+        merged_counts["additions"] += vector_result.additions
+        merged_counts["no_ops"] += vector_result.no_ops
+        merged_counts["conflicts"] += vector_result.conflicts
 
     input_result = _apply_input_merge(target_dir, archive_dir, conflict_mode)
     merged_counts["additions"] += input_result.additions

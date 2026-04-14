@@ -19,6 +19,7 @@ import { toast } from 'sonner'
 import { canCreateAnotherStorage } from '@/lib/editionPolicy'
 import { UpgradePromptDialog } from '@/components/UpgradePromptDialog'
 import { StorageCreateDialog } from '@/components/StorageCreateDialog'
+import { trackEvent } from '@/lib/analytics'
 
 const CREATE_INSTANCE_VALUE = '__create_new_instance__'
 
@@ -46,6 +47,9 @@ export const TenantSelector: React.FC = () => {
     setIsDeleting(true)
     try {
       await deleteGraphStorage(tenantToDelete)
+      trackEvent('storage_deleted', {
+        storage_id: tenantToDelete
+      })
       toast.success('Tenant deleted successfully')
       await loadTenants()
       if (selectedTenantId === tenantToDelete) {

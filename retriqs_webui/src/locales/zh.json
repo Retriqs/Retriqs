@@ -9,7 +9,7 @@
   "header": {
     "documents": "文档",
     "knowledgeGraph": "知识图谱",
-    "retrieval": "检索",
+    "retrieval": "聊天",
     "api": "API",
     "feedback": "反馈",
     "projectRepository": "项目仓库",
@@ -389,7 +389,7 @@
       "thinkingInProgress": "思考进行中..."
     },
     "retrieval": {
-      "startPrompt": "输入查询开始检索",
+      "startPrompt": "输入问题开始聊天",
       "clear": "清空",
       "send": "发送",
       "placeholder": "输入查询内容 (支持模式前缀: /<Query Mode>)",

@@ -34,3 +34,16 @@ export const initializeRuntime = async (): Promise<void> => {
 export const getBackendBaseUrl = (): string => runtime.backendBaseUrl
 
 export const isDesktopRuntime = (): boolean => runtime.desktop
+
+export const openExternalUrl = async (url: string): Promise<void> => {
+  if (isDesktopRuntime()) {
+    const { invoke } = await import('@tauri-apps/api/core')
+    await invoke('open_external_url', { url })
+    return
+  }
+
+  const openedWindow = window.open(url, '_blank', 'noopener,noreferrer')
+  if (!openedWindow) {
+    throw new Error('Browser popup was blocked')
+  }
+}

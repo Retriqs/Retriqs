@@ -137,7 +137,7 @@ class LLMConfigCache:
         self.ollama_embedding_options = None
 
         # Only initialize and log OpenAI options when using OpenAI-related bindings
-        if args.llm_binding in ["openai", "azure_openai"]:
+        if args.llm_binding in ["openai", "openai_codex", "azure_openai"]:
             from retriqs.llm.binding_options import OpenAILLMOptions
 
             self.openai_llm_options = OpenAILLMOptions.options_dict(args)
@@ -235,6 +235,28 @@ class RAGManager:
 
     def all_instances(self):
         return self._instances.items()
+
+
+class MCPMountPathMiddleware:
+    """
+    Normalize mounted MCP path so both /mcp and /mcp/ reach FastMCP.
+
+    Some MCP clients POST to /mcp without trailing slash and do not follow
+    redirects consistently. FastMCP mounted under /mcp expects the effective
+    inner path /, which is reached reliably through /mcp/.
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") == "http" and scope.get("path") == "/mcp":
+            scope = dict(scope)
+            scope["path"] = "/mcp/"
+            raw_path = scope.get("raw_path")
+            if raw_path == b"/mcp":
+                scope["raw_path"] = b"/mcp/"
+        await self.app(scope, receive, send)
 
 
 def check_frontend_build():
@@ -484,6 +506,79 @@ def build_rag_instance(args) -> LightRAG:
 
         return optimized_openai_alike_model_complete
 
+    def create_optimized_openai_codex_llm_func(
+        config_cache: LLMConfigCache, args, llm_timeout: int
+    ):
+        """Create OpenAI Codex OAuth backed LLM function."""
+
+        async def optimized_openai_codex_model_complete(
+            prompt,
+            system_prompt=None,
+            history_messages=None,
+            keyword_extraction=False,
+            **kwargs,
+        ) -> str:
+            from retriqs.llm.openai_codex import openai_codex_complete_if_cache
+
+            keyword_extraction = kwargs.pop(
+                "keyword_extraction", keyword_extraction
+            )
+            if keyword_extraction:
+                kwargs["response_format"] = GPTKeywordExtractionFormat
+            if history_messages is None:
+                history_messages = []
+
+            kwargs["timeout"] = llm_timeout
+            if config_cache.openai_llm_options:
+                kwargs.update(config_cache.openai_llm_options)
+
+            return await openai_codex_complete_if_cache(
+                args.llm_model,
+                prompt,
+                system_prompt=system_prompt,
+                history_messages=history_messages,
+                base_url=args.llm_binding_host,
+                api_key=args.llm_binding_api_key,
+                **kwargs,
+            )
+
+        return optimized_openai_codex_model_complete
+
+    def create_optimized_codex_cli_llm_func(args, llm_timeout: int):
+        """Create Codex CLI backed LLM function using local authenticated Codex app/CLI."""
+
+        async def optimized_codex_cli_model_complete(
+            prompt,
+            system_prompt=None,
+            history_messages=None,
+            keyword_extraction=False,
+            **kwargs,
+        ) -> str:
+            from retriqs.llm.codex_cli import codex_cli_complete_if_cache
+
+            keyword_extraction = kwargs.pop(
+                "keyword_extraction", keyword_extraction
+            )
+            if keyword_extraction:
+                kwargs["response_format"] = GPTKeywordExtractionFormat
+            if history_messages is None:
+                history_messages = []
+
+            kwargs["timeout"] = llm_timeout
+            kwargs["working_dir"] = args.working_dir
+
+            return await codex_cli_complete_if_cache(
+                args.llm_model,
+                prompt,
+                system_prompt=system_prompt,
+                history_messages=history_messages,
+                base_url=args.llm_binding_host,
+                api_key=args.llm_binding_api_key,
+                **kwargs,
+            )
+
+        return optimized_codex_cli_model_complete
+
     def create_llm_model_func(binding: str):
         """
         Create LLM model function based on binding type.
@@ -505,8 +600,14 @@ def build_rag_instance(args) -> LightRAG:
                 return create_optimized_azure_openai_llm_func(
                     config_cache, args, llm_timeout
                 )
+            elif binding == "openai_codex":
+                return create_optimized_openai_codex_llm_func(
+                    config_cache, args, llm_timeout
+                )
             elif binding == "gemini":
                 return create_optimized_gemini_llm_func(config_cache, args, llm_timeout)
+            elif binding == "codex_cli":
+                return create_optimized_codex_cli_llm_func(args, llm_timeout)
             else:  # openai and compatible
                 # Use optimized function with pre-processed configuration
                 return create_optimized_openai_llm_func(config_cache, args, llm_timeout)
@@ -1066,6 +1167,8 @@ def create_app(args):
     if args.llm_binding not in [
         "lollms",
         "ollama",
+        "openai_codex",
+        "codex_cli",
         "openai",
         "azure_openai",
         "aws_bedrock",
@@ -1263,6 +1366,7 @@ def create_app(args):
     # mcp_asgi_app = mcp.sse_app()
 
     app = FastAPI(**app_kwargs)
+    app.add_middleware(MCPMountPathMiddleware)
 
     if mcp_http_app is not None:
         app.mount("/mcp", mcp_http_app)

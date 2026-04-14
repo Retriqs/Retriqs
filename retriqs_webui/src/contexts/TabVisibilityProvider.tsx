@@ -19,7 +19,7 @@ export const TabVisibilityProvider: React.FC<TabVisibilityProviderProps> = ({ ch
   const [visibleTabs, setVisibleTabs] = useState<Record<string, boolean>>(() => ({
     'documents': true,
     'knowledge-graph': true,
-    'retrieval': true,
+    'chat': true,
     'api': true
   }));
 
@@ -29,7 +29,7 @@ export const TabVisibilityProvider: React.FC<TabVisibilityProviderProps> = ({ ch
       ...prev,
       'documents': true,
       'knowledge-graph': true,
-      'retrieval': true,
+      'chat': true,
       'api': true
     }));
   }, [currentTab]);

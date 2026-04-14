@@ -57,6 +57,9 @@ const normalizeModelValue = (modelKey: string, providerHint?: string): string =>
     if (modelKey.startsWith('ollama/')) {
         return modelKey.slice('ollama/'.length);
     }
+    if (modelKey.startsWith('ft:')) {
+        return modelKey.slice('ft:'.length);
+    }
     return modelKey;
 };
 

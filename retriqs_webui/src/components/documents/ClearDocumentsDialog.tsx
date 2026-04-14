@@ -14,6 +14,7 @@ import Checkbox from '@/components/ui/Checkbox'
 import { toast } from 'sonner'
 import { errorMessage } from '@/lib/utils'
 import { clearDocuments, clearCache } from '@/api/retriqs'
+import { trackEvent } from '@/lib/analytics'
 
 import { EraserIcon, AlertTriangleIcon, Loader2Icon } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
@@ -102,6 +103,7 @@ export default function ClearDocumentsDialog({
         return
       }
 
+      trackEvent('documents_cleared', { clear_cache: clearCacheOption })
       toast.success(t('documentPanel.clearDocuments.success'))
 
       if (clearCacheOption) {

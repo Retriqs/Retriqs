@@ -3,6 +3,12 @@ import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '@/stores/state'
 import { useSettingsStore } from '@/stores/settings'
 import { loginToServer, getAuthStatus } from '@/api/retriqs'
+import {
+  trackEvent,
+  identifyAnalyticsUser,
+  captureException,
+  getOrCreateAnalyticsInstallId
+} from '@/lib/analytics'
 import { toast } from 'sonner'
 import { useTranslation } from 'react-i18next'
 import { Card, CardContent, CardHeader } from '@/components/ui/Card'
@@ -148,10 +154,17 @@ const LoginPage = () => {
         toast.success(t('login.successMessage'))
       }
 
+      identifyAnalyticsUser(getOrCreateAnalyticsInstallId(), {
+        username,
+        auth_mode: isGuestMode ? 'guest' : 'password'
+      })
+      trackEvent('user_logged_in', { auth_mode: isGuestMode ? 'guest' : 'password' })
+
       // Navigate to home page after successful login
       navigate('/')
     } catch (error) {
       console.error('Login failed...', error)
+      captureException(error)
       toast.error(t('login.errorInvalidCredentials'))
 
       // Clear any existing auth state

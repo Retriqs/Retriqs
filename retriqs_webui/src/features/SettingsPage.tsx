@@ -3,19 +3,16 @@ import { useTranslation } from 'react-i18next'
 import { useTenant } from '@/contexts/TenantContext'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/Card'
 import Button from '@/components/ui/Button'
-import { toast } from 'sonner'
-import { SaveIcon, Loader2, Cpu, MessageSquarePlus, ArchiveRestore, FileDown } from 'lucide-react'
-import { InstanceSettingsFields } from '@/components/InstanceSettingsFields'
 import Input from '@/components/ui/Input'
+import { toast } from 'sonner'
+import { SaveIcon, Loader2, Cpu, MessageSquarePlus, ArchiveRestore, FileDown, Mail, Trash2 } from 'lucide-react'
+import { InstanceSettingsFields } from '@/components/InstanceSettingsFields'
 import {
   getSystemSettings,
   updateSystemSettings,
   SettingsUpdateRequest,
   deleteGraphStorage,
-  analyzeStorageArchiveMerge,
-  applyStorageArchiveMerge,
   exportStorageArchive,
-  StorageMergeAnalysisResponse
 } from '@/api/retriqs'
 import { errorMessage } from '@/lib/utils'
 import {
@@ -32,21 +29,24 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/Dialog'
 
 import { useNavigate } from 'react-router-dom'
-import { isStorageArchiveFile } from '@/components/tenantCreateDialogUtils'
 import { isStorageNeedsReembedding } from '@/lib/storageSettings'
+import { StorageArchiveImportFlow } from '@/components/StorageArchiveImportFlow'
+import {
+  METRICS_EMAIL_SKIP_STORAGE_KEY,
+  METRICS_EMAIL_STORAGE_KEY,
+  getOrCreateAnalyticsInstallId,
+  identifyAnalyticsUser
+} from '@/lib/analytics'
 
 type EmbeddingComparableSettings = Pick<
   SettingsUpdateRequest,
   | 'embedding_binding'
   | 'embedding_model'
-  | 'embedding_binding_host'
-  | 'embedding_binding_api_key'
   | 'embedding_dim'
   | 'embedding_token_limit'
 >
@@ -56,8 +56,6 @@ const getEmbeddingComparableSettings = (
 ): EmbeddingComparableSettings => ({
   embedding_binding: data.embedding_binding,
   embedding_model: data.embedding_model,
-  embedding_binding_host: data.embedding_binding_host,
-  embedding_binding_api_key: data.embedding_binding_api_key,
   embedding_dim: data.embedding_dim,
   embedding_token_limit: data.embedding_token_limit,
 })
@@ -68,8 +66,6 @@ const hasEmbeddingSettingsChanged = (
 ) =>
   a.embedding_binding !== b.embedding_binding ||
   a.embedding_model !== b.embedding_model ||
-  a.embedding_binding_host !== b.embedding_binding_host ||
-  a.embedding_binding_api_key !== b.embedding_binding_api_key ||
   a.embedding_dim !== b.embedding_dim ||
   a.embedding_token_limit !== b.embedding_token_limit
 
@@ -86,7 +82,9 @@ export default function SettingsPage() {
   const getDefaultMaxAsync = (binding: string) => (binding === 'ollama' ? 1 : 4)
   const getDefaultBindingHost = (binding: string) => {
     if (binding === 'openai') return 'https://api.openai.com/v1'
+    if (binding === 'openai_codex') return 'https://chatgpt.com/backend-api/codex'
     if (binding === 'ollama') return 'http://localhost:11434'
+    if (binding === 'codex_cli') return 'codex'
     return ''
   }
   const normalizeModelForProvider = (binding: string, model: string) => {
@@ -111,10 +109,10 @@ export default function SettingsPage() {
     max_async: 4,
     rerank_binding: 'null',
     id: 0,
-    lightrag_graph_storage: 'NetworkXStorage',
+    lightrag_graph_storage: 'GrafeoGraphStorage',
     lightrag_kv_storage: 'JsonKVStorage',
     lightrag_doc_status_storage: 'JsonDocStatusStorage',
-    lightrag_vector_storage: 'NanoVectorDBStorage',
+    lightrag_vector_storage: 'GrafeoVectorStorage',
     neo4j_uri: 'bolt://localhost:7687',
     neo4j_username: 'neo4j',
     neo4j_password: 'neo4j',
@@ -165,10 +163,10 @@ export default function SettingsPage() {
                 : getDefaultMaxAsync(llmBinding),
               rerank_binding: settingsMap.RERANK_BINDING || 'null',
               id: selectedTenantId,
-              lightrag_graph_storage: settingsMap.LIGHTRAG_GRAPH_STORAGE || 'NetworkXStorage',
+              lightrag_graph_storage: settingsMap.LIGHTRAG_GRAPH_STORAGE || 'GrafeoGraphStorage',
               lightrag_kv_storage: settingsMap.LIGHTRAG_KV_STORAGE || 'JsonKVStorage',
               lightrag_doc_status_storage: settingsMap.LIGHTRAG_DOC_STATUS_STORAGE || 'JsonDocStatusStorage',
-              lightrag_vector_storage: settingsMap.LIGHTRAG_VECTOR_STORAGE || 'NanoVectorDBStorage',
+              lightrag_vector_storage: settingsMap.LIGHTRAG_VECTOR_STORAGE || 'GrafeoVectorStorage',
               neo4j_uri: settingsMap.NEO4J_URI || 'bolt://localhost:7687',
               neo4j_username: settingsMap.NEO4J_USERNAME || 'neo4j',
               neo4j_password: settingsMap.NEO4J_PASSWORD || 'neo4j',
@@ -182,8 +180,6 @@ export default function SettingsPage() {
             setSavedEmbeddingSettings({
               embedding_binding: embeddingBinding,
               embedding_model: normalizeModelForProvider(embeddingBinding, embeddingModel),
-              embedding_binding_host: settingsMap.EMBEDDING_BINDING_HOST || getDefaultBindingHost(embeddingBinding),
-              embedding_binding_api_key: settingsMap.EMBEDDING_BINDING_API_KEY || '',
               embedding_dim: settingsMap.EMBEDDING_DIM ? Number(settingsMap.EMBEDDING_DIM) : (embeddingBinding === 'ollama' ? 1024 : 1536),
               embedding_token_limit: settingsMap.EMBEDDING_TOKEN_LIMIT
                 ? Number(settingsMap.EMBEDDING_TOKEN_LIMIT)
@@ -232,7 +228,7 @@ export default function SettingsPage() {
   }
 
   const handleSave = async () => {
-    if ((formData.llm_binding === 'openai' || formData.embedding_binding === 'openai') && !(formData as any).openai_consent) {
+    if (((formData.llm_binding === 'openai' || formData.llm_binding === 'openai_codex') || formData.embedding_binding === 'openai') && !(formData as any).openai_consent) {
         toast.error(t('Please agree to the External Data Processing terms to use OpenAI.'))
         return
     }
@@ -264,73 +260,44 @@ export default function SettingsPage() {
   const [tenantToDelete, setTenantToDelete] = useState<number | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
   const [showImportDialog, setShowImportDialog] = useState(false)
-  const [existingImportFile, setExistingImportFile] = useState<File | null>(null)
-  const [mergeAnalysis, setMergeAnalysis] = useState<StorageMergeAnalysisResponse | null>(null)
-  const [analyzingMerge, setAnalyzingMerge] = useState(false)
-  const [applyingMerge, setApplyingMerge] = useState(false)
   const [exportingArchive, setExportingArchive] = useState(false)
+  const [analyticsEmail, setAnalyticsEmail] = useState(
+    localStorage.getItem(METRICS_EMAIL_STORAGE_KEY) || ''
+  )
+  const [analyticsError, setAnalyticsError] = useState('')
 
   const selectedTenant = tenants.find((t) => t.id === selectedTenantId)
-  const pageTitle = selectedTenant ? `${selectedTenant.name} Settings` : t('documentPanel.settingsPage.title')
-  const mergeConflictSamples = mergeAnalysis?.samples ?? []
+  const pageTitle = 'Settings'
 
-  const resetImportDialog = () => {
-    setExistingImportFile(null)
-    setMergeAnalysis(null)
-    setAnalyzingMerge(false)
-    setApplyingMerge(false)
+  const handleSaveAnalyticsEmail = () => {
+    const normalizedEmail = analyticsEmail.trim().toLowerCase()
+    const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+
+    if (!emailPattern.test(normalizedEmail)) {
+      setAnalyticsError('Please enter a valid email address.')
+      return
+    }
+
+    localStorage.setItem(METRICS_EMAIL_STORAGE_KEY, normalizedEmail)
+    localStorage.removeItem(METRICS_EMAIL_SKIP_STORAGE_KEY)
+    identifyAnalyticsUser(getOrCreateAnalyticsInstallId(), {
+      email: normalizedEmail,
+      contact_provided: true
+    })
+    setAnalyticsError('')
+    setAnalyticsEmail(normalizedEmail)
+    toast.success('Analytics email updated')
   }
 
-  const handleAnalyzeExistingImport = async () => {
-    if (!selectedTenantId) {
-      toast.error('Select an instance first')
-      return
-    }
-    if (!existingImportFile || !isStorageArchiveFile(existingImportFile)) {
-      toast.error('Please select a storage archive to analyze')
-      return
-    }
-
-    setAnalyzingMerge(true)
-    setMergeAnalysis(null)
-    try {
-      const result = await analyzeStorageArchiveMerge(selectedTenantId, existingImportFile)
-      setMergeAnalysis(result)
-      if (result.blocking_issues.length > 0) {
-        toast.error('Archive analysis found blocking compatibility issues')
-      } else if (result.summary.conflicts > 0) {
-        toast.warning('Archive analysis found merge conflicts that need an explicit apply choice')
-      } else {
-        toast.success('Archive analysis completed')
-      }
-    } catch (err) {
-      toast.error(`Failed to analyze archive: ${errorMessage(err)}`)
-    } finally {
-      setAnalyzingMerge(false)
-    }
-  }
-
-  const handleApplyExistingImport = async (conflictMode: 'archive_wins' | 'keep_existing') => {
-    if (!selectedTenantId || !mergeAnalysis?.analysis_id) {
-      return
-    }
-
-    setApplyingMerge(true)
-    try {
-      const result = await applyStorageArchiveMerge(
-        selectedTenantId,
-        mergeAnalysis.analysis_id,
-        conflictMode
-      )
-      toast.success(result.message)
-      await loadTenants()
-      setShowImportDialog(false)
-      resetImportDialog()
-    } catch (err) {
-      toast.error(`Failed to apply archive merge: ${errorMessage(err)}`)
-    } finally {
-      setApplyingMerge(false)
-    }
+  const handleRemoveAnalyticsEmail = () => {
+    localStorage.removeItem(METRICS_EMAIL_STORAGE_KEY)
+    localStorage.setItem(METRICS_EMAIL_SKIP_STORAGE_KEY, 'true')
+    identifyAnalyticsUser(getOrCreateAnalyticsInstallId(), {
+      contact_provided: false
+    })
+    setAnalyticsError('')
+    setAnalyticsEmail('')
+    toast.success('Analytics email removed')
   }
 
   const handleExportStorage = async () => {
@@ -477,7 +444,6 @@ export default function SettingsPage() {
                     size="sm"
                     className="w-full justify-center gap-2 text-center"
                     onClick={() => {
-                      resetImportDialog()
                       setShowImportDialog(true)
                     }}
                     disabled={!selectedTenantId}
@@ -547,127 +513,79 @@ export default function SettingsPage() {
               </CardContent>
             </Card>
 
+            <Card className="border-none shadow-2xl glass-card">
+              <CardHeader className="bg-muted/10 pb-4 pt-6 px-6 border-b border-border/20">
+                <div className="flex items-center gap-3">
+                  <Mail className="h-4 w-4 text-muted-foreground/70" />
+                  <CardTitle className="text-xs font-black uppercase tracking-widest text-muted-foreground/70">Analytics</CardTitle>
+                </div>
+              </CardHeader>
+              <CardContent className="p-6 space-y-4">
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  Control the optional email used for product analytics.
+                </p>
+                <Input
+                  type="email"
+                  placeholder="name@company.com"
+                  value={analyticsEmail}
+                  onChange={(e) => {
+                    setAnalyticsEmail(e.target.value)
+                    if (analyticsError) {
+                      setAnalyticsError('')
+                    }
+                  }}
+                />
+                {analyticsError && (
+                  <p className="text-xs text-destructive">{analyticsError}</p>
+                )}
+                <div className="flex items-center gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    className="flex-1"
+                    onClick={handleSaveAnalyticsEmail}
+                  >
+                    Save
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="flex-1"
+                    onClick={handleRemoveAnalyticsEmail}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                    Remove
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+
           </div>
         </div>
       </div>
       <Dialog open={showImportDialog} onOpenChange={(open) => {
         setShowImportDialog(open)
-        if (!open) {
-          resetImportDialog()
-        }
       }}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-w-xl bg-background/98 backdrop-blur-2xl border-none shadow-2xl overflow-hidden p-0 max-h-[90vh] flex flex-col">
           <DialogHeader>
-            <DialogTitle>Import Into Existing Storage</DialogTitle>
+            <DialogTitle className="px-8 pt-8 text-2xl font-black">Import Into Existing Storage</DialogTitle>
             <DialogDescription>
               Analyze a storage archive against the current instance, then apply the merge with an explicit conflict policy.
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-4 py-2">
-            <div className="space-y-2">
-              <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Target Instance</label>
-              <div className="rounded-md border border-border bg-muted/30 px-3 py-2 text-sm">
-                {selectedTenant?.name} (Storage ID: {selectedTenant?.id})
-              </div>
-            </div>
-            <div className="space-y-2">
-              <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Storage Archive</label>
-              <Input
-                type="file"
-                accept=".zip,application/zip"
-                onChange={(e) => {
-                  const selectedFile = e.target.files?.[0] || null
-                  setExistingImportFile(selectedFile)
-                  setMergeAnalysis(null)
-                }}
-              />
-              <p className="text-xs text-muted-foreground">
-                This flow only supports file-based local storages. The archive is checked for embedding compatibility before merge analysis runs.
-              </p>
-            </div>
-            {mergeAnalysis && (
-              <div className="space-y-4 rounded-lg border border-border bg-muted/20 p-4">
-                <div className="grid grid-cols-2 gap-3 text-sm md:grid-cols-4">
-                  <div className="rounded-md bg-background px-3 py-2">
-                    <div className="text-xs uppercase text-muted-foreground">Additions</div>
-                    <div className="text-lg font-semibold">{mergeAnalysis.summary.additions}</div>
-                  </div>
-                  <div className="rounded-md bg-background px-3 py-2">
-                    <div className="text-xs uppercase text-muted-foreground">No-ops</div>
-                    <div className="text-lg font-semibold">{mergeAnalysis.summary.no_ops}</div>
-                  </div>
-                  <div className="rounded-md bg-background px-3 py-2">
-                    <div className="text-xs uppercase text-muted-foreground">Conflicts</div>
-                    <div className="text-lg font-semibold">{mergeAnalysis.summary.conflicts}</div>
-                  </div>
-                  <div className="rounded-md bg-background px-3 py-2">
-                    <div className="text-xs uppercase text-muted-foreground">Blocking</div>
-                    <div className="text-lg font-semibold">{mergeAnalysis.blocking_issues.length}</div>
-                  </div>
-                </div>
-                {mergeAnalysis.blocking_issues.length > 0 && (
-                  <div className="space-y-2">
-                    <div className="text-xs font-semibold uppercase tracking-wider text-destructive">Blocking Issues</div>
-                    <div className="space-y-1 text-sm text-destructive">
-                      {mergeAnalysis.blocking_issues.map((issue) => (
-                        <div key={issue}>{issue}</div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                {mergeConflictSamples.length > 0 && (
-                  <div className="space-y-2">
-                    <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Conflict Samples</div>
-                    <div className="max-h-48 space-y-2 overflow-y-auto">
-                      {mergeConflictSamples.map((sample) => (
-                        <div key={`${sample.namespace}:${sample.key}`} className="rounded-md bg-background px-3 py-2 text-sm">
-                          <div className="font-medium">{sample.namespace}</div>
-                          <div className="truncate text-muted-foreground">{sample.key}</div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-          <DialogFooter className="gap-2 sm:justify-between">
-            <Button
-              variant="ghost"
-              onClick={() => {
+          <div className="flex flex-col h-full overflow-y-auto scrollbar-thin p-8 pt-2">
+            <StorageArchiveImportFlow
+              open={showImportDialog}
+              source="custom"
+              allowedModes={['merge']}
+              lockedMode="merge"
+              lockedTargetStorage={selectedTenant ?? null}
+              onCompleted={() => {
                 setShowImportDialog(false)
-                resetImportDialog()
               }}
-              disabled={analyzingMerge || applyingMerge}
-            >
-              Cancel
-            </Button>
-            <div className="flex flex-wrap justify-end gap-2">
-              <Button
-                variant="outline"
-                onClick={() => void handleAnalyzeExistingImport()}
-                disabled={analyzingMerge || applyingMerge || !isStorageArchiveFile(existingImportFile)}
-              >
-                {analyzingMerge ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                Analyze Archive
-              </Button>
-              <Button
-                variant="outline"
-                onClick={() => void handleApplyExistingImport('keep_existing')}
-                disabled={applyingMerge || !mergeAnalysis?.analysis_id || mergeAnalysis.blocking_issues.length > 0}
-              >
-                {applyingMerge ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                Apply: Keep Existing
-              </Button>
-              <Button
-                onClick={() => void handleApplyExistingImport('archive_wins')}
-                disabled={applyingMerge || !mergeAnalysis?.analysis_id || mergeAnalysis.blocking_issues.length > 0}
-              >
-                {applyingMerge ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                Apply: Archive Wins
-              </Button>
-            </div>
-          </DialogFooter>
+            />
+          </div>
         </DialogContent>
       </Dialog>
       <AlertDialog open={!!tenantToDelete} onOpenChange={(open) => !open && setTenantToDelete(null)}>

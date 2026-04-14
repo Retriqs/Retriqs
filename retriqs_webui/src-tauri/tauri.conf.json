@@ -15,6 +15,7 @@
         "width": 1200,
         "height": 650,
         "resizable": true,
+        "dragDropEnabled": false,
         "fullscreen": false,
         "visible": false
       }
@@ -25,7 +26,6 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["msi", "nsis"],
     "resources": ["backend"],
     "windows": {
       "nsis": {
@@ -52,4 +52,3 @@
     ]
   }
 }
-

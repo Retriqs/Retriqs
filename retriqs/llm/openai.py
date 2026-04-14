@@ -839,7 +839,16 @@ async def openai_embed(
             )
 
         texts = truncated_texts
-    logger.info(f"openai client: key {api_key} base_url {base_url} use_azure {use_azure} azure_deployment {azure_deployment} api_version {api_version} client_configs {client_configs}")
+    key_status = "set" if api_key else "empty"
+    logger.info(
+        "openai client: key=%s base_url=%s use_azure=%s azure_deployment=%s api_version=%s client_configs=%s",
+        key_status,
+        base_url,
+        use_azure,
+        azure_deployment,
+        api_version,
+        client_configs,
+    )
     # Create the OpenAI client (supports both OpenAI and Azure)
     openai_async_client = create_openai_async_client(
         api_key=api_key,
